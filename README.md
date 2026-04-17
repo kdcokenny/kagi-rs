@@ -39,7 +39,10 @@ The SDK makes Kagi's two protocol surfaces explicit:
 2. **Session web surface**
    - Auth: `Cookie: kagi_session=<token>`
    - Routes: `/html/search`, `/mother/summary_labs`, `/mother/summary_labs/`
-   - Response shape: HTML and SSE-like stream parsing
+   - Response shape:
+     - search: HTML parsing
+     - summarize: JSON parsing
+     - summarize_stream: framed stream parsing (advanced)
 
 Authoritative route/auth/version scope lives in [`docs/endpoint-auth-version-matrix.md`](./docs/endpoint-auth-version-matrix.md).
 

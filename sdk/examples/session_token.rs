@@ -1,5 +1,5 @@
 use kagi_sdk::{
-    session_web::models::{HtmlSearchRequest, SummaryLabsTextRequest, SummaryLabsUrlRequest},
+    session_web::models::{SearchRequest, SummarizeRequest, SummaryType},
     KagiClient, SessionToken,
 };
 
@@ -7,9 +7,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = KagiClient::with_session_token(SessionToken::new("kagi_session_token_here")?)?;
     let session_web = client.session_web()?;
 
-    let _html_search = HtmlSearchRequest::new("kagi session web")?;
-    let _summary_url = SummaryLabsUrlRequest::new("https://example.com/article")?;
-    let _summary_text = SummaryLabsTextRequest::new("Summarize this text")?;
+    let _search = SearchRequest::new("kagi session web")?;
+    let _summarize = SummarizeRequest::from_url("https://example.com/article")?
+        .with_summary_type(SummaryType::Summary)
+        .with_target_language("en")?;
+    let _summarize_stream = SummarizeRequest::from_text("Summarize this text")?;
 
     let _ = session_web;
     Ok(())

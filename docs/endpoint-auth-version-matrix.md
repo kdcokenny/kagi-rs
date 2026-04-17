@@ -4,7 +4,7 @@ Status updated: 2026-04-17
 
 ## In-scope endpoints
 
-| Endpoint ID | Surface | Method | Route | Version | Parser shape | Allowed credential | In SDK v1 |
+| SDK Operation ID | Surface | Method | Route | Version | Parser shape | Allowed credential | In SDK v1 |
 |---|---|---:|---|---|---|---|---|
 | `official.search` | Official API | GET | `/api/v0/search` | `v0` | JSON envelope | `BotToken` | ✅ |
 | `official.enrich_web` | Official API | GET | `/api/v0/enrich/web` | `v0` | JSON envelope | `BotToken` | ✅ |
@@ -13,9 +13,9 @@ Status updated: 2026-04-17
 | `official.summarize_post` | Official API | POST | `/api/v0/summarize` | `v0` | JSON envelope | `BotToken` | ✅ |
 | `official.fastgpt` | Official API | POST | `/api/v0/fastgpt` | `v0` | JSON envelope | `BotToken` | ✅ |
 | `official.smallweb_feed` | Official API | GET | `/api/v1/smallweb/feed` | `v1` | JSON envelope | `BotToken` | ✅ |
-| `session.html_search` | Session web | GET | `/html/search` | n/a | HTML | `SessionToken` | ✅ |
-| `session.summary_labs_get` | Session web | GET | `/mother/summary_labs` | n/a | Stream/SSE-like | `SessionToken` | ✅ |
-| `session.summary_labs_post` | Session web | POST | `/mother/summary_labs/` | n/a | Stream/SSE-like | `SessionToken` | ✅ |
+| `session.search` | Session web | GET | `/html/search` | n/a | HTML | `SessionToken` | ✅ |
+| `session.summarize` | Session web | GET / POST | `/mother/summary_labs` or `/mother/summary_labs/` | n/a | JSON | `SessionToken` | ✅ |
+| `session.summarize_stream` | Session web | GET / POST | `/mother/summary_labs` or `/mother/summary_labs/` | n/a | Framed stream (`hi/new_message.json/update/final`) | `SessionToken` | ✅ |
 
 ## Explicitly out of scope in SDK v1
 

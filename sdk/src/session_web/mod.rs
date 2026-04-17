@@ -3,14 +3,21 @@ pub mod models;
 use crate::{
     client::KagiClient,
     error::KagiError,
-    parsing::{parse_html_search_response, parse_summary_stream_response},
-    routing::{EndpointId, ParserShape},
+    parsing::{
+        parse_html_search_response, parse_kagi_failure_payload, parse_summarize_response,
+        parse_summary_stream_response,
+    },
+    routing::EndpointId,
     transport::{RequestBody, TransportResponse},
 };
+use scraper::{Html, Selector};
 
+#[allow(deprecated)]
 use self::models::{
     HtmlSearchRequest, HtmlSearchResponse, SummaryLabsTextRequest, SummaryLabsUrlRequest,
-    SummaryStreamResponse,
+};
+use self::models::{
+    SearchRequest, SearchResponse, SummarizeRequest, SummarizeResponse, SummaryStreamResponse,
 };
 
 #[derive(Debug)]
@@ -23,10 +30,7 @@ impl<'a> SessionWeb<'a> {
         Self { client }
     }
 
-    pub async fn html_search(
-        &self,
-        request: HtmlSearchRequest,
-    ) -> Result<HtmlSearchResponse, KagiError> {
+    pub async fn search(&self, request: SearchRequest) -> Result<SearchResponse, KagiError> {
         let response = self
             .request(
                 EndpointId::SessionHtmlSearch,
@@ -34,38 +38,101 @@ impl<'a> SessionWeb<'a> {
                 RequestBody::Empty,
             )
             .await?;
-        ensure_session_response_shape(&response)?;
-        parse_html_search_response(response.endpoint, &response.body)
+
+        if (300..400).contains(&response.status) {
+            return Err(KagiError::InvalidSession {
+                endpoint: response.endpoint,
+                status: response.status,
+                message: format!(
+                    "session-web request redirected to {:?}",
+                    response.redirect_location
+                ),
+            });
+        }
+
+        if response.status >= 400 {
+            return Err(build_http_api_failure(&response));
+        }
+
+        if let Some((code, message)) = parse_kagi_failure_payload(&response.body) {
+            return Err(KagiError::ApiFailure {
+                endpoint: response.endpoint,
+                status: response.status,
+                code,
+                message,
+            });
+        }
+
+        let parsed_search = parse_html_search_response(response.endpoint, &response.body);
+        if parsed_search.is_ok() {
+            return parsed_search;
+        }
+
+        if response_looks_like_kagi_auth_interstitial(&response) {
+            return Err(KagiError::InvalidSession {
+                endpoint: response.endpoint,
+                status: response.status,
+                message: "response matched Kagi auth interstitial structure".to_string(),
+            });
+        }
+
+        parsed_search
     }
 
+    pub async fn summarize(
+        &self,
+        request: SummarizeRequest,
+    ) -> Result<SummarizeResponse, KagiError> {
+        let response = self.request_summarize(request, false).await?;
+
+        validate_non_search_session_response(&response)?;
+        parse_summarize_response(response.endpoint, &response.body)
+    }
+
+    pub async fn summarize_stream(
+        &self,
+        request: SummarizeRequest,
+    ) -> Result<SummaryStreamResponse, KagiError> {
+        let response = self.request_summarize(request, true).await?;
+
+        validate_non_search_session_response(&response)?;
+        parse_summary_stream_response(response.endpoint, &response.body)
+    }
+
+    #[deprecated(note = "use search(SearchRequest) instead")]
+    #[doc(hidden)]
+    #[allow(deprecated)]
+    pub async fn html_search(
+        &self,
+        request: HtmlSearchRequest,
+    ) -> Result<HtmlSearchResponse, KagiError> {
+        self.search(request).await
+    }
+
+    #[deprecated(
+        note = "use summarize(...) or summarize_stream(...) with SummarizeRequest instead"
+    )]
+    #[doc(hidden)]
+    #[allow(deprecated)]
     pub async fn summary_labs_url(
         &self,
         request: SummaryLabsUrlRequest,
     ) -> Result<SummaryStreamResponse, KagiError> {
-        let response = self
-            .request(
-                EndpointId::SessionSummaryLabsGet,
-                request.into_query(),
-                RequestBody::Empty,
-            )
-            .await?;
-        ensure_session_response_shape(&response)?;
-        parse_summary_stream_response(response.endpoint, &response.body)
+        self.summarize_stream(request.into_summarize_request())
+            .await
     }
 
+    #[deprecated(
+        note = "use summarize(...) or summarize_stream(...) with SummarizeRequest instead"
+    )]
+    #[doc(hidden)]
+    #[allow(deprecated)]
     pub async fn summary_labs_text(
         &self,
         request: SummaryLabsTextRequest,
     ) -> Result<SummaryStreamResponse, KagiError> {
-        let response = self
-            .request(
-                EndpointId::SessionSummaryLabsPost,
-                Vec::new(),
-                RequestBody::Form(request.into_form()),
-            )
-            .await?;
-        ensure_session_response_shape(&response)?;
-        parse_summary_stream_response(response.endpoint, &response.body)
+        self.summarize_stream(request.into_summarize_request())
+            .await
     }
 
     async fn request(
@@ -79,92 +146,145 @@ impl<'a> SessionWeb<'a> {
             .execute(self.client.credentials(), endpoint, &query, body)
             .await
     }
-}
 
-fn ensure_session_response_shape(response: &TransportResponse) -> Result<(), KagiError> {
-    if response.status < 400 {
-        let spec = response.endpoint.spec();
-
-        if (300..400).contains(&response.status) {
-            return Err(KagiError::InvalidSession {
-                endpoint: response.endpoint,
-                status: response.status,
-                message: format!(
-                    "session-web request was redirected to {:?}; expected endpoint route {}",
-                    response.redirect_location, spec.route,
-                ),
-            });
+    async fn request_summarize(
+        &self,
+        request: SummarizeRequest,
+        stream: bool,
+    ) -> Result<TransportResponse, KagiError> {
+        if let Some(query) = request.clone().into_query(stream) {
+            return self
+                .request(EndpointId::SessionSummaryLabsGet, query, RequestBody::Empty)
+                .await;
         }
 
-        // Redirect following is disabled in transport, so route-based validation adds little
-        // protection against session/login interstitial pages. We fail fast on redirect status
-        // and then validate content shape for the requested endpoint.
-        ensure_expected_content_shape(response)?;
-        return Ok(());
+        let form = request
+            .into_form(stream)
+            .expect("text summarize request must produce form fields");
+
+        self.request(
+            EndpointId::SessionSummaryLabsPost,
+            Vec::new(),
+            RequestBody::Form(form),
+        )
+        .await
+    }
+}
+
+fn validate_non_search_session_response(response: &TransportResponse) -> Result<(), KagiError> {
+    if (300..400).contains(&response.status) {
+        return Err(KagiError::InvalidSession {
+            endpoint: response.endpoint,
+            status: response.status,
+            message: format!(
+                "session-web request redirected to {:?}",
+                response.redirect_location
+            ),
+        });
     }
 
-    Err(KagiError::ApiFailure {
+    if response_looks_like_kagi_auth_interstitial(response) {
+        return Err(KagiError::InvalidSession {
+            endpoint: response.endpoint,
+            status: response.status,
+            message: "response matched Kagi auth interstitial structure".to_string(),
+        });
+    }
+
+    if let Some((code, message)) = parse_kagi_failure_payload(&response.body) {
+        return Err(KagiError::ApiFailure {
+            endpoint: response.endpoint,
+            status: response.status,
+            code,
+            message,
+        });
+    }
+
+    if response.status >= 400 {
+        return Err(build_http_api_failure(response));
+    }
+
+    Ok(())
+}
+
+fn build_http_api_failure(response: &TransportResponse) -> KagiError {
+    if let Some((code, message)) = parse_kagi_failure_payload(&response.body) {
+        return KagiError::ApiFailure {
+            endpoint: response.endpoint,
+            status: response.status,
+            code,
+            message,
+        };
+    }
+
+    let fallback_message = if response.body.trim().is_empty() {
+        format!(
+            "HTTP {} returned without parseable Kagi failure payload",
+            response.status
+        )
+    } else {
+        response.body.clone()
+    };
+
+    KagiError::ApiFailure {
         endpoint: response.endpoint,
         status: response.status,
         code: None,
-        message: response.body.clone(),
-    })
-}
-
-fn ensure_expected_content_shape(response: &TransportResponse) -> Result<(), KagiError> {
-    match response.endpoint {
-        EndpointId::SessionHtmlSearch => Ok(()),
-        EndpointId::SessionSummaryLabsGet | EndpointId::SessionSummaryLabsPost => {
-            if body_looks_like_html(&response.body) {
-                return Err(KagiError::InvalidSession {
-                    endpoint: response.endpoint,
-                    status: response.status,
-                    message: "summary endpoint returned HTML instead of stream data".to_string(),
-                });
-            }
-
-            if response
-                .content_type
-                .as_deref()
-                .is_some_and(|value| value.to_ascii_lowercase().contains("text/html"))
-            {
-                return Err(KagiError::InvalidSession {
-                    endpoint: response.endpoint,
-                    status: response.status,
-                    message: "summary endpoint returned text/html instead of stream data"
-                        .to_string(),
-                });
-            }
-
-            if response.body.lines().any(looks_like_sse_line) {
-                return Ok(());
-            }
-
-            Err(KagiError::ResponseParse {
-                endpoint: response.endpoint,
-                parser: ParserShape::Stream,
-                reason: "summary endpoint response did not contain SSE-style lines".to_string(),
-            })
-        }
-        _ => Err(KagiError::InvalidClientConfiguration {
-            reason: format!(
-                "session validation received non-session endpoint {}",
-                response.endpoint
-            ),
-        }),
+        message: fallback_message,
     }
 }
 
-fn body_looks_like_html(body: &str) -> bool {
-    let normalized = body.trim_start().to_ascii_lowercase();
-    normalized.starts_with("<!doctype html") || normalized.starts_with("<html")
+fn response_looks_like_kagi_auth_interstitial(response: &TransportResponse) -> bool {
+    if !response_looks_like_html(response) {
+        return false;
+    }
+
+    let document = Html::parse_document(&response.body);
+    let login_form_selector =
+        Selector::parse("form[action='/auth/login'], form[action*='/auth/login']")
+            .expect("static selector must compile");
+    let password_input_selector = Selector::parse("input[type='password'], input[name='password']")
+        .expect("static selector must compile");
+    let auth_link_selector = Selector::parse("a[href='/auth/login'], a[href*='/auth/login']")
+        .expect("static selector must compile");
+    let auth_heading_selector =
+        Selector::parse("title, h1, h2").expect("static selector must compile");
+
+    let has_auth_form_with_password = document
+        .select(&login_form_selector)
+        .any(|form| form.select(&password_input_selector).next().is_some());
+    if has_auth_form_with_password {
+        return true;
+    }
+
+    let has_auth_link = document.select(&auth_link_selector).next().is_some();
+    if !has_auth_link {
+        return false;
+    }
+
+    document.select(&auth_heading_selector).any(|node| {
+        let heading_text = node
+            .text()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase();
+
+        heading_text.contains("sign in")
+            || heading_text.contains("log in")
+            || heading_text.contains("session expired")
+            || heading_text.contains("invalid session")
+    })
 }
 
-fn looks_like_sse_line(line: &str) -> bool {
-    let trimmed = line.trim_start();
-    trimmed.starts_with("data:")
-        || trimmed.starts_with("event:")
-        || trimmed.starts_with("id:")
-        || trimmed.starts_with("retry:")
-        || trimmed.starts_with(':')
+fn response_looks_like_html(response: &TransportResponse) -> bool {
+    if response
+        .content_type
+        .as_deref()
+        .is_some_and(|value| value.to_ascii_lowercase().contains("text/html"))
+    {
+        return true;
+    }
+
+    let trimmed_body = response.body.trim_start().to_ascii_lowercase();
+    trimmed_body.starts_with("<!doctype html") || trimmed_body.starts_with("<html")
 }

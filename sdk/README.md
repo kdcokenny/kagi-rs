@@ -63,7 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ```rust
 use kagi_sdk::{KagiClient, SessionToken};
-use kagi_sdk::session_web::models::HtmlSearchRequest;
+use kagi_sdk::session_web::models::{SearchRequest, SummarizeRequest};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -71,8 +71,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = KagiClient::with_session_token(token)?;
     let web = client.session_web()?;
 
-    let response = web.html_search(HtmlSearchRequest::new("kagi rust sdk")?).await?;
-    println!("{} results", response.results.len());
+    let search = web.search(SearchRequest::new("kagi rust sdk")?).await?;
+    let summary = web.summarize(SummarizeRequest::from_url("https://example.com")?).await?;
+    println!("{} results, summary chars: {}", search.results.len(), summary.markdown.len());
     Ok(())
 }
 ```
@@ -95,16 +96,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 | Method | Route | SDK method |
 |---|---|---|
-| GET | `/html/search` | `session_web.html_search(...)` |
-| GET | `/mother/summary_labs` | `session_web.summary_labs_url(...)` |
-| POST | `/mother/summary_labs/` | `session_web.summary_labs_text(...)` |
+| GET | `/html/search` | `session_web.search(...)` |
+| GET or POST | `/mother/summary_labs` or `/mother/summary_labs/` | `session_web.summarize(...)` |
+| GET or POST | `/mother/summary_labs` or `/mother/summary_labs/` | `session_web.summarize_stream(...)` *(advanced)* |
 
 ## Why two surfaces?
 
 Kagi uses two distinct protocols with different auth, routes, and response formats.
 
 - Official API is JSON-envelope based and bot-token authenticated.
-- Session web is session-cookie authenticated and returns HTML or stream responses.
+- Session web is session-cookie authenticated with three response modes:
+  - `search(...)` parses HTML
+  - `summarize(...)` parses JSON
+  - `summarize_stream(...)` parses framed stream output (advanced)
 
 The SDK keeps those surfaces separate and performs runtime pre-request checks so unsupported credential/surface combinations fail loudly.
 

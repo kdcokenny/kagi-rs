@@ -12,7 +12,10 @@
 //! 2. **Session web surface**
 //!    - Cookie header: `Cookie: kagi_session=<token>`
 //!    - Routes: `/html/search`, `/mother/summary_labs`, `/mother/summary_labs/`
-//!    - Response shape: HTML and SSE-like stream parsing
+//!    - Response shape:
+//!      - `search(...)`: HTML parsing
+//!      - `summarize(...)`: JSON parsing
+//!      - `summarize_stream(...)`: framed stream parsing (advanced)
 //!
 //! The SDK enforces auth/surface compatibility at runtime before request execution,
 //! returning explicit errors for unsupported combinations.
@@ -39,7 +42,7 @@
 //!
 //! ```no_run
 //! use kagi_sdk::{KagiClient, SessionToken};
-//! use kagi_sdk::session_web::models::HtmlSearchRequest;
+//! use kagi_sdk::session_web::models::{SearchRequest, SummarizeRequest};
 //!
 //! # async fn run() -> Result<(), kagi_sdk::KagiError> {
 //! let token =
@@ -47,8 +50,11 @@
 //! let client = KagiClient::with_session_token(token)?;
 //! let web = client.session_web()?;
 //!
-//! let response = web.html_search(HtmlSearchRequest::new("kagi rust sdk")?).await?;
-//! println!("{}", response.results.len());
+//! let search = web.search(SearchRequest::new("kagi rust sdk")?).await?;
+//! let summary = web
+//!     .summarize(SummarizeRequest::from_url("https://example.com")?)
+//!     .await?;
+//! println!("{} {}", search.results.len(), summary.markdown.len());
 //! # Ok(())
 //! # }
 //! # fn main() {}
@@ -87,8 +93,8 @@
 //! | [`client`] | `KagiClient` construction and surface entrypoints |
 //! | [`config`] | Client base URL, timeout, and user-agent configuration |
 //! | [`official_api`] | Typed official API requests and envelope parsing |
-//! | [`session_web`] | Typed session-web requests plus HTML/stream handling |
-//! | [`parsing`] | HTML and SSE-like parser helpers |
+//! | [`session_web`] | Typed session-web requests for HTML search, JSON summarize, and advanced framed streaming |
+//! | [`parsing`] | Parser helpers for session HTML search, summarize JSON, and framed streaming |
 //! | [`routing`] | Endpoint metadata (surface, version, parser shape) |
 //! | [`error`] | Central typed error model |
 //!
@@ -111,6 +117,7 @@ pub mod routing;
 pub mod session_web;
 
 pub use auth::{BotToken, CredentialKind, Credentials, SessionToken};
+pub use boundary::{HttpUrl, NonBlankString, NonEmptyString};
 pub use client::{KagiClient, KagiClientBuilder};
 pub use config::ClientConfig;
 pub use error::KagiError;

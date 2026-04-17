@@ -1,3 +1,4 @@
+use super::summarize::parse_kagi_failure_payload;
 use serde_json::Value;
 
 use crate::{
@@ -10,14 +11,150 @@ pub fn parse_summary_stream_response(
     endpoint: EndpointId,
     raw_body: &str,
 ) -> Result<SummaryStreamResponse, KagiError> {
+    if let Some((code, message)) = parse_kagi_failure_payload(raw_body) {
+        return Err(KagiError::ApiFailure {
+            endpoint,
+            status: 200,
+            code,
+            message,
+        });
+    }
+
     if body_looks_like_html(raw_body) {
         return Err(KagiError::ResponseParse {
             endpoint,
             parser: ParserShape::Stream,
-            reason: "expected SSE stream but received HTML".to_string(),
+            reason: "expected framed summary stream but received HTML".to_string(),
         });
     }
 
+    if looks_like_kagi_prefixed_stream(raw_body) {
+        return parse_kagi_prefixed_stream(endpoint, raw_body);
+    }
+
+    parse_sse_stream(endpoint, raw_body)
+}
+
+fn parse_kagi_prefixed_stream(
+    endpoint: EndpointId,
+    raw_body: &str,
+) -> Result<SummaryStreamResponse, KagiError> {
+    let mut chunks = Vec::new();
+    let mut saw_prefixed_frame = false;
+
+    for frame in iter_prefixed_frames(raw_body) {
+        if frame.is_empty() {
+            continue;
+        }
+
+        let (prefix, payload) = frame
+            .split_once(':')
+            .ok_or_else(|| KagiError::ResponseParse {
+                endpoint,
+                parser: ParserShape::Stream,
+                reason: format!("malformed stream frame without prefix delimiter: `{frame}`"),
+            })?;
+
+        saw_prefixed_frame = true;
+        if let Some(chunk) = parse_prefixed_frame_payload(endpoint, prefix, payload)? {
+            chunks.push(chunk);
+        }
+    }
+
+    if !saw_prefixed_frame {
+        return Err(KagiError::ResponseParse {
+            endpoint,
+            parser: ParserShape::Stream,
+            reason: "stream did not contain Kagi prefixed frames".to_string(),
+        });
+    }
+
+    if chunks.is_empty() {
+        return Err(KagiError::ResponseParse {
+            endpoint,
+            parser: ParserShape::Stream,
+            reason: "stream did not contain any summary text chunks".to_string(),
+        });
+    }
+
+    let text = chunks.concat();
+    Ok(SummaryStreamResponse { chunks, text })
+}
+
+fn parse_prefixed_frame_payload(
+    endpoint: EndpointId,
+    prefix: &str,
+    payload: &str,
+) -> Result<Option<String>, KagiError> {
+    let normalized_prefix = prefix.trim();
+    let payload_text = payload.trim_end_matches(['\r', '\n']);
+
+    if let Some((code, message)) = parse_kagi_failure_payload(payload_text) {
+        return Err(KagiError::ApiFailure {
+            endpoint,
+            status: 200,
+            code,
+            message,
+        });
+    }
+
+    match normalized_prefix {
+        "hi" => Ok(None),
+        "new_message.json" => parse_required_json_frame(endpoint, normalized_prefix, payload_text),
+        "update" | "final" => parse_text_or_json_frame(endpoint, normalized_prefix, payload_text),
+        _ => Err(KagiError::ResponseParse {
+            endpoint,
+            parser: ParserShape::Stream,
+            reason: format!("unsupported stream frame prefix `{normalized_prefix}`"),
+        }),
+    }
+}
+
+fn parse_required_json_frame(
+    endpoint: EndpointId,
+    prefix: &str,
+    payload: &str,
+) -> Result<Option<String>, KagiError> {
+    let normalized_payload = strip_optional_json_leading_space(payload);
+    if normalized_payload.is_empty() {
+        return Err(KagiError::ResponseParse {
+            endpoint,
+            parser: ParserShape::Stream,
+            reason: format!("stream frame `{prefix}` did not contain JSON payload"),
+        });
+    }
+
+    let parsed_json = serde_json::from_str::<Value>(normalized_payload).map_err(|source| {
+        KagiError::ResponseParse {
+            endpoint,
+            parser: ParserShape::Stream,
+            reason: format!("stream frame `{prefix}` contained invalid JSON: {source}"),
+        }
+    })?;
+
+    Ok(extract_stream_text(&parsed_json))
+}
+
+fn parse_text_or_json_frame(
+    endpoint: EndpointId,
+    prefix: &str,
+    payload: &str,
+) -> Result<Option<String>, KagiError> {
+    if payload == "[DONE]" {
+        return Ok(None);
+    }
+
+    if looks_like_json_payload(payload) {
+        return parse_required_json_frame(endpoint, prefix, payload);
+    }
+
+    Ok(Some(payload.to_string()))
+}
+
+fn parse_sse_stream(
+    endpoint: EndpointId,
+    raw_body: &str,
+) -> Result<SummaryStreamResponse, KagiError> {
     let mut chunks = Vec::new();
     let mut stream_event_name = String::from("message");
     let mut stream_event_data = Vec::new();
@@ -28,7 +165,7 @@ pub fn parse_summary_stream_response(
         let trimmed_line = raw_line.trim();
 
         if trimmed_line.is_empty() {
-            flush_stream_event(
+            flush_sse_event(
                 endpoint,
                 &stream_event_name,
                 &mut stream_event_data,
@@ -58,7 +195,7 @@ pub fn parse_summary_stream_response(
             }
             "data" => {
                 if should_flush_before_appending_data(&stream_event_data, &field_value) {
-                    flush_stream_event(
+                    flush_sse_event(
                         endpoint,
                         &stream_event_name,
                         &mut stream_event_data,
@@ -79,7 +216,7 @@ pub fn parse_summary_stream_response(
         }
     }
 
-    flush_stream_event(
+    flush_sse_event(
         endpoint,
         &stream_event_name,
         &mut stream_event_data,
@@ -90,7 +227,7 @@ pub fn parse_summary_stream_response(
         return Err(KagiError::ResponseParse {
             endpoint,
             parser: ParserShape::Stream,
-            reason: "response did not contain SSE fields".to_string(),
+            reason: "response did not contain supported stream frames".to_string(),
         });
     }
 
@@ -102,11 +239,11 @@ pub fn parse_summary_stream_response(
         });
     }
 
-    let text = chunks.join("");
+    let text = chunks.concat();
     Ok(SummaryStreamResponse { chunks, text })
 }
 
-fn flush_stream_event(
+fn flush_sse_event(
     endpoint: EndpointId,
     event_name: &str,
     event_data: &mut Vec<String>,
@@ -119,7 +256,7 @@ fn flush_stream_event(
     let data_payload = event_data.join("\n");
     event_data.clear();
 
-    if data_payload.trim().is_empty() || data_payload.trim() == "[DONE]" {
+    if data_payload.is_empty() || data_payload == "[DONE]" {
         return Ok(());
     }
 
@@ -133,28 +270,29 @@ fn flush_stream_event(
         });
     }
 
-    if let Some(text_chunk) = parse_stream_chunk(endpoint, &data_payload)? {
-        if !text_chunk.trim().is_empty() {
-            chunks.push(text_chunk);
-        }
+    if let Some(text_chunk) = parse_sse_stream_chunk(endpoint, &data_payload)? {
+        chunks.push(text_chunk);
     }
 
     Ok(())
 }
 
-fn parse_stream_chunk(endpoint: EndpointId, payload: &str) -> Result<Option<String>, KagiError> {
-    if !payload.trim_start().starts_with('{') {
+fn parse_sse_stream_chunk(
+    endpoint: EndpointId,
+    payload: &str,
+) -> Result<Option<String>, KagiError> {
+    if !looks_like_json_payload(payload) {
         return Ok(Some(payload.to_string()));
     }
 
-    let parsed: Value =
-        serde_json::from_str(payload).map_err(|source| KagiError::ResponseParse {
+    let parsed_json =
+        serde_json::from_str::<Value>(payload).map_err(|source| KagiError::ResponseParse {
             endpoint,
             parser: ParserShape::Stream,
             reason: format!("invalid stream JSON event: {source}"),
         })?;
 
-    Ok(extract_stream_text(&parsed))
+    Ok(extract_stream_text(&parsed_json))
 }
 
 fn parse_sse_field(line: &str) -> Option<(&str, String)> {
@@ -176,7 +314,7 @@ fn parse_sse_field(line: &str) -> Option<(&str, String)> {
 }
 
 fn parse_error_payload(payload: &str) -> (Option<String>, String) {
-    let json_error: Result<Value, _> = serde_json::from_str(payload);
+    let json_error = serde_json::from_str::<Value>(payload);
     let Ok(value) = json_error else {
         return (None, payload.to_string());
     };
@@ -215,37 +353,20 @@ fn parse_error_payload(payload: &str) -> (Option<String>, String) {
     (code, message)
 }
 
-fn body_looks_like_html(raw_body: &str) -> bool {
-    let normalized = raw_body.trim_start().to_ascii_lowercase();
-    normalized.starts_with("<!doctype html") || normalized.starts_with("<html")
-}
-
-fn should_flush_before_appending_data(current_data: &[String], next_data_line: &str) -> bool {
-    if current_data.is_empty() {
-        return false;
-    }
-
-    if current_data
-        .iter()
-        .all(|line| looks_like_complete_json_line(line) || line.trim() == "[DONE]")
-    {
-        return looks_like_complete_json_line(next_data_line) || next_data_line.trim() == "[DONE]";
-    }
-
-    false
-}
-
-fn looks_like_complete_json_line(line: &str) -> bool {
-    let trimmed = line.trim();
-    trimmed.starts_with('{') && trimmed.ends_with('}')
-}
-
 fn extract_stream_text(value: &Value) -> Option<String> {
     if let Some(text) = value.get("text").and_then(Value::as_str) {
         return Some(text.to_string());
     }
 
     if let Some(text) = value.get("delta").and_then(Value::as_str) {
+        return Some(text.to_string());
+    }
+
+    if let Some(text) = value.get("content").and_then(Value::as_str) {
+        return Some(text.to_string());
+    }
+
+    if let Some(text) = value.get("chunk").and_then(Value::as_str) {
         return Some(text.to_string());
     }
 
@@ -264,5 +385,74 @@ fn extract_stream_text(value: &Value) -> Option<String> {
         return Some(text.to_string());
     }
 
+    if let Some(text) = value
+        .get("message")
+        .and_then(|message| message.get("text"))
+        .and_then(Value::as_str)
+    {
+        return Some(text.to_string());
+    }
+
     None
+}
+
+fn iter_prefixed_frames(raw_body: &str) -> Vec<&str> {
+    if raw_body.contains('\0') {
+        raw_body
+            .split('\0')
+            .map(|frame| frame.trim_end_matches(['\r', '\n']))
+            .collect()
+    } else {
+        raw_body.lines().collect()
+    }
+}
+
+fn looks_like_kagi_prefixed_stream(raw_body: &str) -> bool {
+    if raw_body.contains('\0') {
+        return true;
+    }
+
+    raw_body.lines().any(|line| {
+        let trimmed = line.trim_start();
+        trimmed.starts_with("hi:")
+            || trimmed.starts_with("new_message.json:")
+            || trimmed.starts_with("update:")
+            || trimmed.starts_with("final:")
+    })
+}
+
+fn body_looks_like_html(raw_body: &str) -> bool {
+    let normalized = raw_body.trim_start().to_ascii_lowercase();
+    normalized.starts_with("<!doctype html") || normalized.starts_with("<html")
+}
+
+fn should_flush_before_appending_data(current_data: &[String], next_data_line: &str) -> bool {
+    if current_data.is_empty() {
+        return false;
+    }
+
+    if current_data
+        .iter()
+        .all(|line| looks_like_complete_json_line(line) || line == "[DONE]")
+    {
+        return looks_like_complete_json_line(next_data_line) || next_data_line == "[DONE]";
+    }
+
+    false
+}
+
+fn looks_like_complete_json_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    (trimmed.starts_with('{') && trimmed.ends_with('}'))
+        || (trimmed.starts_with('[') && trimmed.ends_with(']'))
+}
+
+fn looks_like_json_payload(payload: &str) -> bool {
+    let normalized = strip_optional_json_leading_space(payload);
+    normalized.starts_with('{') || normalized.starts_with('[')
+}
+
+fn strip_optional_json_leading_space(payload: &str) -> &str {
+    let without_prefix_space = payload.strip_prefix(' ').unwrap_or(payload);
+    without_prefix_space.trim_end_matches(['\r', '\n'])
 }
