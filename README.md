@@ -1,32 +1,66 @@
-# Kagi Rust Workspace
+# kagi-rs
 
-Rust-first monorepo for Kagi tooling.
+Rust-native tooling workspace for Kagi.
 
-## Scope in this pass
+`kagi-rs` is currently SDK-first: the core `kagi-sdk` crate is implemented and tested, with room reserved for future CLI and MCP crates built on top of it.
 
-- ✅ `sdk/` crate (implemented)
-- ⏳ `cli/` crate (planned, not implemented)
-- ⏳ `mcp/` crate (planned, not implemented)
+## Workspace status
 
-The workspace is intentionally SDK-first. CLI and MCP crates will be added later on top of this SDK.
+| Path | Crate | Status | Notes |
+|---|---|---|---|
+| `sdk/` | `kagi-sdk` | ✅ Available | Typed Rust SDK with explicit official-api and session-web surfaces |
+| `cli/` | *(planned)* | ⏳ Planned | Reserved for a future end-user command-line interface |
+| `mcp/` | *(planned)* | ⏳ Planned | Reserved for a future MCP server crate |
 
-## Protocol surfaces made explicit
+> `cli/` and `mcp/` are not implemented in this repository yet.
 
-The SDK intentionally exposes two separate surfaces:
+## Quickstart (workspace)
 
-1. **Official Kagi API**
+```bash
+# from repo root
+cargo test --workspace
+
+# run SDK examples
+cargo run -p kagi-sdk --example bot_token
+cargo run -p kagi-sdk --example session_token
+```
+
+For SDK usage details, see [`sdk/README.md`](./sdk/README.md).
+
+## Dual-surface SDK model
+
+The SDK makes Kagi's two protocol surfaces explicit:
+
+1. **Official API surface**
    - Auth: `Authorization: Bot <token>`
-   - Routes: `/api/v0/*`, `/api/v1/*` (in-scope subset only)
-   - Response style: JSON envelopes
+   - Route families: `/api/v0/*`, `/api/v1/*` (in-scope subset only)
+   - Response shape: JSON envelopes
 
-2. **Session-token-backed web surface**
+2. **Session web surface**
    - Auth: `Cookie: kagi_session=<token>`
    - Routes: `/html/search`, `/mother/summary_labs`, `/mother/summary_labs/`
-   - Response style: HTML + stream parsing
+   - Response shape: HTML and SSE-like stream parsing
 
-See `docs/endpoint-auth-version-matrix.md` for the v1 source-of-truth route/auth/version matrix.
+Authoritative route/auth/version scope lives in [`docs/endpoint-auth-version-matrix.md`](./docs/endpoint-auth-version-matrix.md).
 
-## Verification commands
+## Design principles
+
+- **Explicit protocol boundaries**: official API and session web are separate SDK entrypoints.
+- **Fail-fast behavior**: unsupported auth/surface combinations and invalid response shapes fail loudly.
+- **Typed inputs at boundaries**: request constructors parse and reject invalid data early.
+- **Lean foundation**: keep dependencies and surface area focused while CLI/MCP are still future work.
+
+## Workspace layout
+
+```text
+kagi-rs/
+├── sdk/      # implemented Rust SDK crate
+├── cli/      # reserved for future CLI crate
+├── mcp/      # reserved for future MCP crate
+└── docs/     # endpoint/auth/version matrix and project docs
+```
+
+## Development commands
 
 Run from repository root:
 
