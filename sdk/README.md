@@ -11,15 +11,17 @@ The crate is designed to make those protocol boundaries obvious in code through 
 
 ### A) Local development in this repository
 
-If your crate lives in this workspace, add:
+`path` is resolved relative to the consuming crate's `Cargo.toml`.
+
+For a sibling crate in this repo (for example future `cli/` or `mcp/`), use:
 
 ```toml
 [dependencies]
-kagi-sdk = { path = "sdk" }
+kagi-sdk = { path = "../sdk" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
-If your crate is outside this repository, point to the absolute or relative path of this `sdk/` directory.
+If your crate is outside this repository, point `path` to this `sdk/` directory using an appropriate relative or absolute path.
 
 ### B) External usage from GitHub (today)
 
