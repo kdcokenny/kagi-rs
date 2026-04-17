@@ -59,11 +59,9 @@
 //! ```no_run
 //! use std::time::Duration;
 //! use kagi_sdk::{BotToken, ClientConfig, KagiClient};
-//! use url::Url;
 //!
 //! # fn run() -> Result<(), kagi_sdk::KagiError> {
 //! let config = ClientConfig::default()
-//!     .with_base_url(Url::parse("https://kagi.com").expect("valid static URL"))
 //!     .with_timeout(Duration::from_secs(15))
 //!     .with_user_agent("my-app/0.1.0");
 //!

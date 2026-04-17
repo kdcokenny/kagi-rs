@@ -9,15 +9,35 @@ The crate is designed to make those protocol boundaries obvious in code through 
 
 ## Install
 
-Inside this workspace:
+### A) Local development in this repository
+
+If your crate lives in this workspace, add:
 
 ```toml
 [dependencies]
-kagi-sdk = { path = "./sdk" }
+kagi-sdk = { path = "sdk" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
-`kagi-sdk` is not published to crates.io yet.
+If your crate is outside this repository, point to the absolute or relative path of this `sdk/` directory.
+
+### B) External usage from GitHub (today)
+
+```toml
+[dependencies]
+kagi-sdk = { git = "https://github.com/kdcokenny/kagi-rs", package = "kagi-sdk" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+```
+
+Optionally pin to a revision for reproducibility:
+
+```toml
+kagi-sdk = { git = "https://github.com/kdcokenny/kagi-rs", package = "kagi-sdk", rev = "<commit-hash>" }
+```
+
+### C) crates.io (future)
+
+`kagi-sdk` is not published to crates.io yet. When it is published, this README will include the exact crates.io dependency line.
 
 ## Quickstart: official API (bot token)
 
@@ -116,11 +136,9 @@ async fn run() -> Result<(), KagiError> {
 ```rust
 use std::time::Duration;
 use kagi_sdk::{BotToken, ClientConfig, KagiClient};
-use url::Url;
 
 fn build_client() -> Result<KagiClient, kagi_sdk::KagiError> {
     let config = ClientConfig::default()
-        .with_base_url(Url::parse("https://kagi.com").expect("valid static URL"))
         .with_timeout(Duration::from_secs(10))
         .with_user_agent("my-app/0.1.0");
 

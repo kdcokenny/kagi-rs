@@ -50,15 +50,20 @@ Authoritative route/auth/version scope lives in [`docs/endpoint-auth-version-mat
 - **Typed inputs at boundaries**: request constructors parse and reject invalid data early.
 - **Lean foundation**: keep dependencies and surface area focused while CLI/MCP are still future work.
 
-## Workspace layout
+## Current workspace layout
 
 ```text
 kagi-rs/
 ├── sdk/      # implemented Rust SDK crate
-├── cli/      # reserved for future CLI crate
-├── mcp/      # reserved for future MCP crate
 └── docs/     # endpoint/auth/version matrix and project docs
 ```
+
+## Planned additions
+
+- `cli/`: future command-line crate built on `kagi-sdk`
+- `mcp/`: future MCP server crate built on `kagi-sdk`
+
+These are planned next steps, not active workspace crates today.
 
 ## Development commands
 
