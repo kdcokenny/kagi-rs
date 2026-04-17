@@ -1,0 +1,23 @@
+[package]
+name = "kagi-sdk"
+description = "Rust-first Kagi SDK with explicit official-api and session-web surfaces"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
+scraper = "0.18"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+url = "=2.4.1"
+indexmap = "=2.2.6"
+idna = "=0.5.0"
+
+[dev-dependencies]
+mockito = "=1.2.0"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

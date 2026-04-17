@@ -1,0 +1,4 @@
+data: {"text":"Hello "}
+data: {"text":"world"}
+data: {"text":"!"}
+data: [DONE]
