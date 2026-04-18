@@ -112,7 +112,7 @@ jobs:
               raise SystemExit("Failed to locate compiled live_official test binary.")
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"test-binary={test_binary}\\n")
+              output.write(f"test-binary={test_binary.strip()}\n")
           PY
 
       - name: Run official live SDK test binary
@@ -183,7 +183,7 @@ jobs:
               raise SystemExit("Failed to locate compiled live_session test binary.")
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"test-binary={test_binary}\\n")
+              output.write(f"test-binary={test_binary.strip()}\n")
           PY
 
       - name: Run session live SDK test binary
