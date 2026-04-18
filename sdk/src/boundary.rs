@@ -114,6 +114,20 @@ mod tests {
     }
 
     #[test]
+    fn http_url_normalizes_idn_host_to_punycode() {
+        let from_unicode =
+            HttpUrl::new("url", "https://bücher.example/search?q=kagi").expect("should parse");
+        let from_punycode = HttpUrl::new("url", "https://xn--bcher-kva.example/search?q=kagi")
+            .expect("should parse");
+
+        assert_eq!(from_unicode.as_str(), from_punycode.as_str());
+        assert_eq!(
+            from_unicode.as_str(),
+            "https://xn--bcher-kva.example/search?q=kagi"
+        );
+    }
+
+    #[test]
     fn non_blank_string_preserves_original_whitespace() {
         let parsed = NonBlankString::new("text", "  keep me  ").expect("should parse");
         assert_eq!(parsed.as_str(), "  keep me  ");
