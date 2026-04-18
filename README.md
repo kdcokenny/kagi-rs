@@ -12,17 +12,51 @@ Rust-native tooling workspace for Kagi.
 | `cli/` | *(planned)* | ⏳ Planned | Reserved for a future end-user command-line interface |
 | `mcp/` | `kagi-mcp` | ✅ Implemented (non-publishable) | MCP stdio server exposing `kagi_search` and `kagi_summarize`; `publish = false` in this phase |
 
-## First crates.io SDK release policy (manual-first)
+## SDK release policy (manual-first)
 
 - **Publish boundary in this phase**:
   - `sdk/` (`kagi-sdk`) is the only crate prepared for crates.io publication.
   - `mcp/` (`kagi-mcp`) remains workspace-only with `publish = false`.
   - `cli/` remains out of scope and is not a workspace package in this phase.
-- **No-tag rule in this phase**: do not create a `v*.*.*` tag for the first SDK publish pass.
+- **Tag namespace boundary**:
+  - `v*.*.*` tags are reserved for the MCP GitHub release workflow.
+  - SDK bookkeeping tags must use `sdk-v*.*.*` only.
 - **Workflow boundary in this phase**:
   - do not repurpose `.github/workflows/release.yml`
   - do not add a dedicated SDK publish workflow yet
 - **Shared versioning choice**: workspace version remains shared via `workspace.package.version = "0.1.0"` and is consumed by workspace crates.
+
+### SDK post-publish tag helper (local)
+
+Use `scripts/sdk-release-tag.py` only after `kagi-sdk` is already published on crates.io from the exact current clean `HEAD` snapshot on `origin/main`.
+
+Safety contract enforced by the helper:
+
+1. Reads the effective SDK version from `workspace.package.version` plus `sdk/Cargo.toml` (`name = "kagi-sdk"`, `version.workspace = true`).
+2. Fetches and requires `HEAD == origin/main`.
+3. Requires `kagi-sdk@<version>` to already exist on crates.io.
+4. Derives only `sdk-v<version>` (never `v<version>`).
+5. Requires a completely clean working tree and index (including untracked files) before any create/push action.
+6. Refuses to rewrite existing SDK semver tags.
+7. Allows `--force` only for a safe push retry of an already-correct existing local tag when origin is missing it.
+
+Preview checks without creating or pushing tags:
+
+```bash
+scripts/sdk-release-tag.py --check
+```
+
+Create and push the SDK bookkeeping tag (post-publish):
+
+```bash
+scripts/sdk-release-tag.py
+```
+
+If local `sdk-v<version>` already exists at `HEAD` but origin is missing it, retry push only:
+
+```bash
+scripts/sdk-release-tag.py --force
+```
 
 ## Quickstart (workspace)
 
