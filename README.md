@@ -12,7 +12,7 @@ Rust-native tooling workspace for Kagi.
 | `cli/` | *(planned)* | ⏳ Planned | Reserved for a future end-user command-line interface |
 | `mcp/` | `kagi-mcp` | ✅ Implemented (non-publishable) | MCP stdio server exposing `kagi_search` and `kagi_summarize`; `publish = false` in this phase |
 
-## SDK release policy (manual-first)
+## Release tag policy (manual-first)
 
 - **Publish boundary in this phase**:
   - `sdk/` (`kagi-sdk`) is the only crate prepared for crates.io publication.
@@ -25,6 +25,38 @@ Rust-native tooling workspace for Kagi.
   - do not repurpose `.github/workflows/release.yml`
   - do not add a dedicated SDK publish workflow yet
 - **Shared versioning choice**: workspace version remains shared via `workspace.package.version = "0.1.1"` and is consumed by workspace crates.
+
+### MCP release tag helper (local)
+
+Use `scripts/mcp-release-tag.py` when preparing the MCP release tag that drives `.github/workflows/release.yml`.
+
+Safety contract enforced by the helper:
+
+1. Reads the effective MCP release version from `workspace.package.version` plus `mcp/Cargo.toml` (`name = "kagi-mcp"`, `version.workspace = true`).
+2. Fetches and requires `HEAD == origin/main`.
+3. Derives only `v<version>` (never `sdk-v<version>`).
+4. Requires a completely clean working tree and index (including untracked files) before any create/push action.
+5. Refuses to rewrite existing MCP semver tags.
+6. Allows `--force` only for a safe push retry of an already-correct existing local tag when origin is missing it.
+7. Does **not** require crates.io publication; this path is aligned to the tag-triggered GitHub binary release workflow.
+
+Preview checks without creating or pushing tags:
+
+```bash
+scripts/mcp-release-tag.py --check
+```
+
+Create and push the MCP release tag:
+
+```bash
+scripts/mcp-release-tag.py
+```
+
+If local `v<version>` already exists at `HEAD` but origin is missing it, retry push only:
+
+```bash
+scripts/mcp-release-tag.py --force
+```
 
 ### SDK post-publish tag helper (local)
 
