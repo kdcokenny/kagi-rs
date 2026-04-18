@@ -2,7 +2,7 @@
 
 Rust-native tooling workspace for Kagi.
 
-`kagi-rs` is currently SDK-first: the core `kagi-sdk` crate is implemented and tested, with room reserved for future CLI and MCP crates built on top of it.
+`kagi-rs` currently ships an SDK crate and an MCP crate built on top of that SDK.
 
 ## Workspace status
 
@@ -10,9 +10,7 @@ Rust-native tooling workspace for Kagi.
 |---|---|---|---|
 | `sdk/` | `kagi-sdk` | ✅ Available | Typed Rust SDK with explicit official-api and session-web surfaces |
 | `cli/` | *(planned)* | ⏳ Planned | Reserved for a future end-user command-line interface |
-| `mcp/` | *(planned)* | ⏳ Planned | Reserved for a future MCP server crate |
-
-> `cli/` and `mcp/` are not implemented in this repository yet.
+| `mcp/` | `kagi-mcp` | ✅ Available | MCP stdio server exposing `kagi_search` and `kagi_summarize` |
 
 ## Quickstart (workspace)
 
@@ -23,6 +21,9 @@ cargo test --workspace
 # run SDK examples
 cargo run -p kagi-sdk --example bot_token
 cargo run -p kagi-sdk --example session_token
+
+# run MCP stdio server
+KAGI_API_KEY=... cargo run -p kagi-mcp
 ```
 
 For SDK usage details, see [`sdk/README.md`](./sdk/README.md).
@@ -51,22 +52,22 @@ Authoritative route/auth/version scope lives in [`docs/endpoint-auth-version-mat
 - **Explicit protocol boundaries**: official API and session web are separate SDK entrypoints.
 - **Fail-fast behavior**: unsupported auth/surface combinations and invalid response shapes fail loudly.
 - **Typed inputs at boundaries**: request constructors parse and reject invalid data early.
-- **Lean foundation**: keep dependencies and surface area focused while CLI/MCP are still future work.
+- **Lean foundation**: keep dependencies and surface area focused while expanding deliberately.
 
 ## Current workspace layout
 
 ```text
 kagi-rs/
 ├── sdk/      # implemented Rust SDK crate
+├── mcp/      # implemented Rust MCP stdio server crate
 └── docs/     # endpoint/auth/version matrix and project docs
 ```
 
 ## Planned additions
 
 - `cli/`: future command-line crate built on `kagi-sdk`
-- `mcp/`: future MCP server crate built on `kagi-sdk`
 
-These are planned next steps, not active workspace crates today.
+`cli/` remains a planned next step and is not an active workspace crate yet.
 
 ## Development commands
 

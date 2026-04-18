@@ -1,9 +1,9 @@
 [workspace]
-members = ["sdk"]
+members = ["sdk", "mcp"]
 resolver = "2"
 
 [workspace.metadata.future-crates]
-planned = ["cli", "mcp"]
+planned = ["cli"]
 
 [workspace.package]
 edition = "2021"

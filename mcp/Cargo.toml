@@ -1,0 +1,25 @@
+[package]
+name = "kagi-mcp"
+description = "MCP stdio server for kagi-sdk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+kagi-sdk = { path = "../sdk" }
+rmcp = { version = "1.5", features = ["client", "transport-io"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+url = "2"
+
+[dev-dependencies]
+mockito = "=1.2.0"
+tokio = { version = "1", features = ["io-util", "macros", "process", "rt-multi-thread", "time"] }

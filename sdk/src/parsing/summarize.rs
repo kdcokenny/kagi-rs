@@ -34,10 +34,7 @@ pub fn parse_summarize_response(
         });
     }
 
-    let payload = root_object
-        .get("data")
-        .and_then(Value::as_object)
-        .unwrap_or(root_object);
+    let payload = resolve_summarize_payload(root_object);
 
     if let Some((code, message)) = extract_kagi_failure_from_object(payload) {
         return Err(KagiError::ApiFailure {
@@ -55,7 +52,7 @@ pub fn parse_summarize_response(
     })?;
 
     let text =
-        extract_optional_string(payload, "text").map_err(|reason| KagiError::ResponseParse {
+        extract_optional_text(root_object, payload).map_err(|reason| KagiError::ResponseParse {
             endpoint,
             parser: ParserShape::JsonEnvelope,
             reason,
@@ -100,6 +97,42 @@ fn extract_required_markdown(object: &Map<String, Value>) -> Option<String> {
     }
 
     None
+}
+
+fn resolve_summarize_payload(root_object: &Map<String, Value>) -> &Map<String, Value> {
+    root_object
+        .get("data")
+        .and_then(Value::as_object)
+        .or_else(|| root_object.get("output_data").and_then(Value::as_object))
+        .unwrap_or(root_object)
+}
+
+fn extract_optional_text(
+    root_object: &Map<String, Value>,
+    payload: &Map<String, Value>,
+) -> Result<Option<String>, String> {
+    for (object, field_name) in [
+        (payload, "text"),
+        (payload, "output_text"),
+        (root_object, "text"),
+        (root_object, "output_text"),
+    ] {
+        let Some(value) = object.get(field_name) else {
+            continue;
+        };
+
+        match value {
+            Value::String(text) => return Ok(Some(text.clone())),
+            Value::Null => continue,
+            _ => {
+                return Err(format!(
+                    "malformed default summarize JSON: `{field_name}` must be a string when present"
+                ));
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 fn extract_optional_string(
@@ -185,6 +218,12 @@ fn extract_failure_details(object: &Map<String, Value>) -> (Option<String>, Stri
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned)
         })
+        .or_else(|| {
+            object
+                .get("output_text")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
         .unwrap_or_else(|| "unknown Kagi failure".to_string());
 
     (code, message)
@@ -217,5 +256,69 @@ fn is_failure_marker(value: &Value) -> bool {
         },
         Value::Array(items) => !items.is_empty(),
         Value::Object(_) => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_kagi_failure_payload, parse_summarize_response};
+    use crate::{
+        error::KagiError,
+        routing::{EndpointId, ParserShape},
+    };
+
+    #[test]
+    fn parse_summarize_response_supports_output_data_payload_shape() {
+        let response = parse_summarize_response(
+            EndpointId::SessionSummaryLabsGet,
+            r##"{
+                "output_text": "plain summary",
+                "output_data": {
+                    "status": "completed",
+                    "markdown": "# summary markdown"
+                }
+            }"##,
+        )
+        .expect("output_data markdown response should parse");
+
+        assert_eq!(response.markdown, "# summary markdown");
+        assert_eq!(response.text.as_deref(), Some("plain summary"));
+        assert_eq!(response.status.as_deref(), Some("completed"));
+    }
+
+    #[test]
+    fn parse_summarize_response_returns_actionable_parse_error_when_markdown_missing() {
+        let error = parse_summarize_response(
+            EndpointId::SessionSummaryLabsGet,
+            r#"{ "output_data": { "status": "completed" } }"#,
+        )
+        .expect_err("missing markdown should fail loudly");
+
+        match error {
+            KagiError::ResponseParse {
+                parser: ParserShape::JsonEnvelope,
+                reason,
+                ..
+            } => {
+                assert!(
+                    reason.contains("missing markdown text"),
+                    "unexpected parse failure reason: {reason}"
+                );
+            }
+            unexpected => panic!("expected ResponseParse error, got {unexpected:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_kagi_failure_payload_uses_output_text_when_error_message_missing() {
+        let (_, message) = parse_kagi_failure_payload(
+            r#"{
+                "error": true,
+                "output_text": "Min document size not reached"
+            }"#,
+        )
+        .expect("error payload should be extracted");
+
+        assert_eq!(message, "Min document size not reached");
     }
 }
