@@ -1,4 +1,5 @@
 use kagi_sdk::{official_api::models::SearchRequest, BotToken, ClientConfig, KagiClient};
+use serde_json::Value;
 use url::Url;
 
 fn required_env_or_skip(name: &str) -> Option<String> {
@@ -26,6 +27,56 @@ fn live_config() -> ClientConfig {
     ClientConfig::default().with_base_url(parsed_base_url)
 }
 
+fn extract_search_items(data: &Value) -> Option<&[Value]> {
+    match data {
+        Value::Array(items) => Some(items.as_slice()),
+        Value::Object(map) => {
+            for key in ["results", "search_results", "organic_results", "items"] {
+                if let Some(items) = map.get(key).and_then(Value::as_array) {
+                    return Some(items.as_slice());
+                }
+            }
+
+            map.get("data")
+                .and_then(Value::as_object)
+                .and_then(|nested| nested.get("results"))
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+        }
+        _ => None,
+    }
+}
+
+fn extract_first_nonblank<'a>(
+    map: &'a serde_json::Map<String, Value>,
+    keys: &[&str],
+) -> Option<&'a str> {
+    keys.iter().find_map(|key| {
+        map.get(*key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn is_usable_search_result(item: &Value) -> bool {
+    let Some(map) = item.as_object() else {
+        return false;
+    };
+
+    let Some(url) = extract_first_nonblank(map, &["url", "link"]) else {
+        return false;
+    };
+
+    if extract_first_nonblank(map, &["title", "name"]).is_none() {
+        return false;
+    }
+
+    Url::parse(url)
+        .ok()
+        .is_some_and(|parsed_url| matches!(parsed_url.scheme(), "http" | "https"))
+}
+
 #[tokio::test]
 #[ignore = "manual live test; run with -- --ignored"]
 async fn live_official_search_smoke_test() -> Result<(), kagi_sdk::KagiError> {
@@ -43,13 +94,16 @@ async fn live_official_search_smoke_test() -> Result<(), kagi_sdk::KagiError> {
         .search(SearchRequest::new("rust")?)
         .await?;
 
-    let data_object = response
-        .data
-        .as_object()
-        .expect("official live search response data must be a JSON object");
+    let items = extract_search_items(&response.data).expect(
+        "official live search response data must be an array or object with a results-like array",
+    );
     assert!(
-        !data_object.is_empty(),
-        "official live search response data object must not be empty"
+        !items.is_empty(),
+        "official live search response data must include at least one result item"
+    );
+    assert!(
+        items.iter().any(is_usable_search_result),
+        "official live search response data must include at least one usable result with non-empty title/name and absolute http(s) url/link"
     );
 
     Ok(())
