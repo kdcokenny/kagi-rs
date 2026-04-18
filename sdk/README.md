@@ -23,7 +23,15 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 If your crate is outside this repository, point `path` to this `sdk/` directory using an appropriate relative or absolute path.
 
-### B) External usage from GitHub (today)
+### B) crates.io
+
+```toml
+[dependencies]
+kagi-sdk = "0.1.0"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+```
+
+### C) External usage from GitHub
 
 ```toml
 [dependencies]
@@ -37,9 +45,7 @@ Optionally pin to a revision for reproducibility:
 kagi-sdk = { git = "https://github.com/kdcokenny/kagi-rs", package = "kagi-sdk", rev = "<commit-hash>" }
 ```
 
-### C) crates.io (future)
-
-`kagi-sdk` is not published to crates.io yet. When it is published, this README will include the exact crates.io dependency line.
+If you need an unreleased revision, you can depend on the repository directly.
 
 ## Quickstart: official API (bot token)
 

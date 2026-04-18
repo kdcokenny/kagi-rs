@@ -10,7 +10,19 @@ Rust-native tooling workspace for Kagi.
 |---|---|---|---|
 | `sdk/` | `kagi-sdk` | ✅ Available | Typed Rust SDK with explicit official-api and session-web surfaces |
 | `cli/` | *(planned)* | ⏳ Planned | Reserved for a future end-user command-line interface |
-| `mcp/` | `kagi-mcp` | ✅ Available | MCP stdio server exposing `kagi_search` and `kagi_summarize` |
+| `mcp/` | `kagi-mcp` | ✅ Implemented (non-publishable) | MCP stdio server exposing `kagi_search` and `kagi_summarize`; `publish = false` in this phase |
+
+## First crates.io SDK release policy (manual-first)
+
+- **Publish boundary in this phase**:
+  - `sdk/` (`kagi-sdk`) is the only crate prepared for crates.io publication.
+  - `mcp/` (`kagi-mcp`) remains workspace-only with `publish = false`.
+  - `cli/` remains out of scope and is not a workspace package in this phase.
+- **No-tag rule in this phase**: do not create a `v*.*.*` tag for the first SDK publish pass.
+- **Workflow boundary in this phase**:
+  - do not repurpose `.github/workflows/release.yml`
+  - do not add a dedicated SDK publish workflow yet
+- **Shared versioning choice**: workspace version remains shared via `workspace.package.version = "0.1.0"` and is consumed by workspace crates.
 
 ## Quickstart (workspace)
 

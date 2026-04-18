@@ -4,6 +4,13 @@ description = "Rust-first Kagi SDK with explicit official-api and session-web su
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+readme = "README.md"
+repository = "https://github.com/kdcokenny/kagi-rs"
+homepage = "https://github.com/kdcokenny/kagi-rs"
+documentation = "https://docs.rs/kagi-sdk"
+rust-version = "1.94"
+keywords = ["kagi", "search", "sdk", "api", "client"]
+categories = ["api-bindings", "web-programming::http-client"]
 
 [lints]
 workspace = true
