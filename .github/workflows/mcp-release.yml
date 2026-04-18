@@ -1,0 +1,432 @@
+name: MCP Release
+
+on:
+  push:
+    tags:
+      - "mcp-v*.*.*"
+
+permissions: {}
+
+jobs:
+  validate-release:
+    name: Validate MCP release tag and publish gates
+    if: github.repository == 'kdcokenny/kagi-rs'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Ensure tag commit is reachable from origin/main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --prune origin main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::Tag ${GITHUB_REF_NAME} must point to a commit already reachable from origin/main."
+            exit 1
+          fi
+
+      - name: Ensure MCP tag version matches mcp/Cargo.toml
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+          import tomllib
+
+          tag_name = os.environ["GITHUB_REF_NAME"]
+          match = re.fullmatch(r"mcp-v(\d+\.\d+\.\d+)", tag_name)
+          if match is None:
+              raise SystemExit(f"::error::Release tag '{tag_name}' must match mcp-vX.Y.Z.")
+
+          tag_version = match.group(1)
+          cargo_toml = pathlib.Path("mcp/Cargo.toml")
+          package = tomllib.loads(cargo_toml.read_text(encoding="utf-8")).get("package", {})
+          crate_name = package.get("name")
+          manifest_version = package.get("version")
+
+          if crate_name != "kagi-mcp":
+              raise SystemExit(
+                  f"::error::mcp/Cargo.toml package.name must be 'kagi-mcp' (found {crate_name!r})."
+              )
+
+          if not isinstance(manifest_version, str):
+              raise SystemExit("::error::mcp/Cargo.toml package.version must be an explicit string.")
+
+          if tag_version != manifest_version:
+              raise SystemExit(
+                  "::error::Release tag version does not match mcp/Cargo.toml package.version "
+                  f"({tag_version} != {manifest_version})."
+              )
+
+          print(f"MCP tag version {tag_version} matches mcp/Cargo.toml package.version.")
+          PY
+
+      - name: Validate exact SDK pin and crates.io SDK availability
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import pathlib
+          import re
+          import tomllib
+          import urllib.error
+          import urllib.request
+
+          mcp_cargo_toml = pathlib.Path("mcp/Cargo.toml")
+          mcp_manifest = tomllib.loads(mcp_cargo_toml.read_text(encoding="utf-8"))
+          mcp_package = mcp_manifest.get("package", {})
+          mcp_dependencies = mcp_manifest.get("dependencies", {})
+
+          mcp_crate_name = mcp_package.get("name")
+          if mcp_crate_name != "kagi-mcp":
+              raise SystemExit(
+                  f"::error::mcp/Cargo.toml package.name must be 'kagi-mcp' (found {mcp_crate_name!r})."
+              )
+
+          if not isinstance(mcp_dependencies, dict):
+              raise SystemExit("::error::mcp/Cargo.toml [dependencies] must be a table.")
+
+          sdk_dependency = mcp_dependencies.get("kagi-sdk")
+          if not isinstance(sdk_dependency, dict):
+              raise SystemExit(
+                  "::error::mcp/Cargo.toml dependencies.kagi-sdk must be a table with an exact version pin."
+              )
+
+          sdk_package_override = sdk_dependency.get("package")
+          if sdk_package_override is not None:
+              raise SystemExit(
+                  "::error::mcp/Cargo.toml dependencies.kagi-sdk must not set 'package = ...'. "
+                  "Dependency renaming/package overrides are not allowed for the MCP -> SDK pin."
+              )
+
+          def iter_dependency_tables(manifest: dict):
+              for table_name in ("dependencies", "build-dependencies", "dev-dependencies"):
+                  table = manifest.get(table_name)
+                  if table is None:
+                      continue
+                  if not isinstance(table, dict):
+                      raise SystemExit(f"::error::mcp/Cargo.toml [{table_name}] must be a table.")
+                  yield table_name, table
+
+              target_table = manifest.get("target")
+              if target_table is None:
+                  return
+              if not isinstance(target_table, dict):
+                  raise SystemExit("::error::mcp/Cargo.toml [target] must be a table.")
+
+              for target_name, target_spec in target_table.items():
+                  if not isinstance(target_spec, dict):
+                      raise SystemExit(
+                          f"::error::mcp/Cargo.toml [target.{target_name}] must be a table."
+                      )
+
+                  for table_name in ("dependencies", "build-dependencies", "dev-dependencies"):
+                      table = target_spec.get(table_name)
+                      if table is None:
+                          continue
+                      if not isinstance(table, dict):
+                          raise SystemExit(
+                              f"::error::mcp/Cargo.toml [target.{target_name}.{table_name}] must be a table."
+                          )
+                      yield f"target.{target_name}.{table_name}", table
+
+          for table_path, dependency_table in iter_dependency_tables(mcp_manifest):
+              for dependency_name, dependency_spec in dependency_table.items():
+                  is_direct_sdk_edge = dependency_name == "kagi-sdk"
+                  is_aliased_sdk_edge = (
+                      isinstance(dependency_spec, dict)
+                      and dependency_spec.get("package") == "kagi-sdk"
+                  )
+
+                  if table_path == "dependencies" and is_direct_sdk_edge:
+                      continue
+
+                  if is_direct_sdk_edge or is_aliased_sdk_edge:
+                      raise SystemExit(
+                          "::error::mcp/Cargo.toml must declare the SDK edge only as dependencies.kagi-sdk "
+                          "with no dependency renaming/package override. "
+                          f"Found disallowed edge at [{table_path}] {dependency_name}."
+                      )
+
+          sdk_version_requirement = sdk_dependency.get("version")
+          if not isinstance(sdk_version_requirement, str):
+              raise SystemExit(
+                  "::error::mcp/Cargo.toml dependencies.kagi-sdk.version must be an explicit string in '=X.Y.Z' form."
+              )
+
+          version_match = re.fullmatch(r"=(\d+\.\d+\.\d+)", sdk_version_requirement)
+          if version_match is None:
+              raise SystemExit(
+                  "::error::mcp/Cargo.toml dependencies.kagi-sdk.version must be exactly '=X.Y.Z' "
+                  f"(found {sdk_version_requirement!r})."
+              )
+
+          sdk_version = version_match.group(1)
+          if "path" in sdk_dependency:
+              sdk_dependency_path = sdk_dependency.get("path")
+              if not isinstance(sdk_dependency_path, str) or not sdk_dependency_path.strip():
+                  raise SystemExit(
+                      "::error::mcp/Cargo.toml dependencies.kagi-sdk.path must be a non-empty string "
+                      "when present."
+                  )
+
+              mcp_manifest_dir = mcp_cargo_toml.parent.resolve()
+              expected_sdk_dir = (mcp_manifest_dir / ".." / "sdk").resolve()
+              resolved_sdk_dir = (mcp_manifest_dir / pathlib.Path(sdk_dependency_path)).resolve()
+
+              if resolved_sdk_dir != expected_sdk_dir:
+                  raise SystemExit(
+                      "::error::mcp/Cargo.toml dependencies.kagi-sdk.path must resolve to the workspace SDK "
+                      f"crate at {expected_sdk_dir} (resolved {resolved_sdk_dir} from {sdk_dependency_path!r})."
+                  )
+
+              sdk_cargo_toml = resolved_sdk_dir / "Cargo.toml"
+              if not sdk_cargo_toml.is_file():
+                  raise SystemExit(
+                      "::error::mcp/Cargo.toml dependencies.kagi-sdk.path resolved to a location without "
+                      f"Cargo.toml: {resolved_sdk_dir}."
+                  )
+
+              sdk_package = tomllib.loads(sdk_cargo_toml.read_text(encoding="utf-8")).get("package", {})
+              sdk_package_name = sdk_package.get("name")
+              if sdk_package_name != "kagi-sdk":
+                  raise SystemExit(
+                      "::error::mcp/Cargo.toml dependencies.kagi-sdk.path must point to package.name "
+                      f"'kagi-sdk' (found {sdk_package_name!r} at {sdk_cargo_toml})."
+                  )
+
+              sdk_local_version = sdk_package.get("version")
+              if sdk_local_version != sdk_version:
+                  raise SystemExit(
+                      "::error::mcp/Cargo.toml uses a local path for kagi-sdk, so the exact pinned version "
+                      "must match sdk/Cargo.toml package.version "
+                      f"({sdk_version!r} != {sdk_local_version!r})."
+                  )
+
+          sdk_crates_io_url = f"https://crates.io/api/v1/crates/kagi-sdk/{sdk_version}"
+          try:
+              with urllib.request.urlopen(sdk_crates_io_url, timeout=10) as response:
+                  sdk_payload = json.load(response)
+          except urllib.error.HTTPError as exc:
+              if exc.code == 404:
+                  raise SystemExit(
+                      "::error::kagi-sdk exact pinned version does not exist on crates.io: "
+                      f"kagi-sdk@{sdk_version}."
+                  )
+              raise SystemExit(
+                  f"::error::crates.io request failed with HTTP {exc.code} for {sdk_crates_io_url}"
+              )
+          except urllib.error.URLError as exc:
+              raise SystemExit(f"::error::Unable to reach crates.io while validating kagi-sdk pin ({exc}).")
+
+          sdk_reported_version = sdk_payload.get("version", {}).get("num")
+          if sdk_reported_version != sdk_version:
+              raise SystemExit(
+                  "::error::crates.io returned an unexpected payload while checking kagi-sdk "
+                  f"({sdk_reported_version!r} for expected {sdk_version!r})."
+              )
+
+          print(
+              "Validated exact MCP dependency pin and crates.io availability: "
+              f"kagi-sdk = '={sdk_version}'."
+          )
+          PY
+
+      - name: Fail fast if kagi-mcp version already exists on crates.io
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import urllib.error
+          import urllib.request
+
+          tag_name = os.environ["GITHUB_REF_NAME"]
+          match = re.fullmatch(r"mcp-v(\d+\.\d+\.\d+)", tag_name)
+          if match is None:
+              raise SystemExit(f"::error::Release tag '{tag_name}' must match mcp-vX.Y.Z.")
+
+          version = match.group(1)
+          url = f"https://crates.io/api/v1/crates/kagi-mcp/{version}"
+
+          try:
+              with urllib.request.urlopen(url, timeout=10) as response:
+                  payload = json.load(response)
+          except urllib.error.HTTPError as exc:
+              if exc.code == 404:
+                  print(f"kagi-mcp@{version} does not exist on crates.io; publish may proceed.")
+                  raise SystemExit(0)
+              raise SystemExit(f"::error::crates.io request failed with HTTP {exc.code} for {url}")
+          except urllib.error.URLError as exc:
+              raise SystemExit(f"::error::Unable to reach crates.io ({exc}).")
+
+          reported_version = payload.get("version", {}).get("num")
+          if reported_version == version:
+              raise SystemExit(
+                  f"::error::kagi-mcp@{version} already exists on crates.io. Refusing duplicate publish."
+              )
+
+          raise SystemExit(
+              "::error::crates.io returned an unexpected payload while checking existing version "
+              f"({reported_version!r} for expected {version!r})."
+          )
+          PY
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Lint workspace
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace --locked
+
+      - name: Run doc tests
+        run: cargo test --doc --workspace --locked
+
+      - name: Build workspace
+        run: cargo build --workspace --all-targets --locked
+
+      - name: List package contents
+        run: cargo package --locked -p kagi-mcp --list
+
+      - name: Dry-run publish
+        run: cargo publish --locked -p kagi-mcp --dry-run
+
+  build-binaries:
+    name: Build kagi-mcp (${{ matrix.target }})
+    if: github.repository == 'kdcokenny/kagi-rs'
+    needs:
+      - validate-release
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            binary_name: kagi-mcp
+          - target: x86_64-apple-darwin
+            os: macos-13
+            binary_name: kagi-mcp
+          - target: aarch64-apple-darwin
+            os: macos-14
+            binary_name: kagi-mcp
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            binary_name: kagi-mcp.exe
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Build release binary
+        run: cargo build -p kagi-mcp --release --locked --target ${{ matrix.target }}
+
+      - name: Collect release artifact (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/kagi-mcp-${GITHUB_REF_NAME}-${{ matrix.target }}"
+
+      - name: Collect release artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/kagi-mcp-$env:GITHUB_REF_NAME-${{ matrix.target }}.exe"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kagi-mcp-${{ matrix.target }}
+          path: dist/*
+
+  publish-crate:
+    name: Publish kagi-mcp to crates.io
+    if: github.repository == 'kdcokenny/kagi-rs'
+    needs:
+      - validate-release
+      - build-binaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Publish kagi-mcp
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --locked -p kagi-mcp
+
+  publish-release:
+    name: Publish GitHub release assets
+    if: github.repository == 'kdcokenny/kagi-rs'
+    needs:
+      - build-binaries
+      - publish-crate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download built artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: kagi-mcp-*
+          merge-multiple: true
+          path: dist
+
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum * > SHA256SUMS
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2.2.1
+        with:
+          files: |
+            dist/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+
+      - name: Recovery posture on asset publication failure
+        if: ${{ failure() }}
+        run: |
+          echo "::error::Crate publication must never be retried after a successful publish."
+          echo "::error::Fix GitHub release asset/checksum publication separately and safely."

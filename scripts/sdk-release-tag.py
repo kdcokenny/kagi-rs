@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import argparse
-import json
+import re
 import subprocess
 import sys
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 if sys.version_info < (3, 11):
@@ -17,25 +15,26 @@ import tomllib
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE_CARGO_TOML = REPO_ROOT / "Cargo.toml"
 SDK_CARGO_TOML = REPO_ROOT / "sdk" / "Cargo.toml"
 SDK_CRATE_NAME = "kagi-sdk"
+RELEASE_VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+$")
+SDK_TAG_PATTERN = re.compile(r"^sdk-v\d+\.\d+\.\d+$")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="scripts/sdk-release-tag.py",
         description=(
-            "Create and push an SDK-only post-publish bookkeeping tag in the format sdk-vX.Y.Z.\n"
-            "This helper does not touch MCP vX.Y.Z release tags."
+            "Create and push an SDK release tag in the format sdk-vX.Y.Z.\n"
+            "This helper does not publish crates; it only manages tags."
         ),
         epilog=(
             "Examples:\n"
             "  scripts/sdk-release-tag.py --check\n"
             "  scripts/sdk-release-tag.py\n"
             "  scripts/sdk-release-tag.py --force\n\n"
-            "Run this only when the published kagi-sdk crate version came from the exact current\n"
-            "clean HEAD snapshot on origin/main.\n\n"
+            "Run this only when the intended SDK release snapshot is exactly the current\n"
+            "HEAD on origin/main.\n\n"
             "--force is intentionally narrow: it is only accepted when the local sdk-vX.Y.Z\n"
             "tag already exists at HEAD and origin is missing that same tag (safe push retry)."
         ),
@@ -83,16 +82,7 @@ def load_toml(path: Path) -> dict:
         fail(f"Invalid TOML in {path}: {exc}")
 
 
-def resolve_sdk_version() -> str:
-    workspace_data = load_toml(WORKSPACE_CARGO_TOML)
-    workspace_version = (
-        workspace_data.get("workspace", {})
-        .get("package", {})
-        .get("version")
-    )
-    if not isinstance(workspace_version, str) or not workspace_version.strip():
-        fail("workspace.package.version is missing or empty in Cargo.toml.")
-
+def resolve_sdk_release() -> tuple[str, str]:
     sdk_data = load_toml(SDK_CARGO_TOML)
     package_table = sdk_data.get("package", {})
     package_name = package_table.get("name")
@@ -103,13 +93,20 @@ def resolve_sdk_version() -> str:
         )
 
     sdk_version = package_table.get("version")
-    if not isinstance(sdk_version, dict) or sdk_version.get("workspace") is not True:
+    if not isinstance(sdk_version, str) or not RELEASE_VERSION_PATTERN.fullmatch(sdk_version):
         fail(
-            "sdk/Cargo.toml must set `version.workspace = true` so workspace.package.version "
-            "remains the SDK release source of truth."
+            "sdk/Cargo.toml package.version must be an explicit release semver in X.Y.Z form "
+            f"(found {sdk_version!r})."
         )
 
-    return workspace_version
+    tag_name = f"sdk-v{sdk_version}"
+    if not SDK_TAG_PATTERN.fullmatch(tag_name):
+        fail(
+            "Derived SDK release tag does not match required grammar sdk-vX.Y.Z "
+            f"(derived {tag_name!r})."
+        )
+
+    return sdk_version, tag_name
 
 
 def ensure_head_matches_origin_main() -> str:
@@ -126,31 +123,6 @@ def ensure_head_matches_origin_main() -> str:
         )
 
     return head_sha
-
-
-def ensure_crates_io_version_exists(version: str) -> None:
-    url = f"https://crates.io/api/v1/crates/{SDK_CRATE_NAME}/{version}"
-    print(f"Checking crates.io for {SDK_CRATE_NAME}@{version}...")
-
-    try:
-        with urllib.request.urlopen(url, timeout=10) as response:
-            payload = json.load(response)
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            fail(
-                f"{SDK_CRATE_NAME}@{version} was not found on crates.io. "
-                "Publish the SDK crate first, then tag."
-            )
-        fail(f"crates.io request failed with HTTP {exc.code} for {url}")
-    except urllib.error.URLError as exc:
-        fail(f"Unable to reach crates.io ({exc}).")
-
-    reported_version = payload.get("version", {}).get("num")
-    if reported_version != version:
-        fail(
-            "crates.io returned an unexpected version payload "
-            f"({reported_version!r} instead of {version!r})."
-        )
 
 
 def ensure_clean_worktree_and_index() -> None:
@@ -200,7 +172,7 @@ def get_remote_tag_target_commit(tag_name: str) -> str | None:
     fail(f"Could not resolve remote commit target for tag {tag_name!r}.")
 
 
-def plan_tag_action(tag_name: str, head_sha: str, force: bool) -> str:
+def plan_tag_action(tag_name: str, head_sha: str) -> str:
     local_tag_sha = get_local_tag_sha(tag_name)
     remote_tag_sha = get_remote_tag_target_commit(tag_name)
 
@@ -223,20 +195,34 @@ def plan_tag_action(tag_name: str, head_sha: str, force: bool) -> str:
                 f"Local tag {tag_name} already exists at {local_tag_sha[:12]}, not HEAD {head_sha[:12]}. "
                 "Refusing to rewrite SDK semver tags."
             )
-        if not force:
-            fail(
-                f"Local tag {tag_name} exists and points to HEAD, but origin is missing it. "
-                "Re-run with --force to retry pushing the existing correct local tag."
-            )
         return "push-existing"
+
+    return "create-and-push"
+
+
+def ensure_force_policy(action: str, force: bool) -> None:
+    if action == "push-existing":
+        if force:
+            return
+        fail(
+            "Planned action is push-existing, which is intentionally gated. "
+            "Re-run with --force to retry pushing the existing correct local tag."
+        )
 
     if force:
         fail(
             "--force is only allowed when retrying a push of an existing local SDK tag "
-            "that already points to HEAD."
+            "that already points to HEAD while origin is missing it."
         )
 
-    return "create-and-push"
+
+def ensure_head_stable(expected_head_sha: str) -> None:
+    current_head_sha = run_git("rev-parse", "HEAD").stdout.strip()
+    if current_head_sha != expected_head_sha:
+        fail(
+            "HEAD changed during checks; aborting to avoid tagging an unexpected snapshot. "
+            f"expected {expected_head_sha[:12]}, current {current_head_sha[:12]}"
+        )
 
 
 def execute_tag_action(tag_name: str, head_sha: str, action: str) -> None:
@@ -264,27 +250,22 @@ def execute_tag_action(tag_name: str, head_sha: str, action: str) -> None:
 def main() -> int:
     args = parse_args()
 
-    version = resolve_sdk_version()
-    tag_name = f"sdk-v{version}"
+    version, tag_name = resolve_sdk_release()
     print(f"Resolved SDK release version: {version}")
     print(f"Derived SDK tag: {tag_name}")
 
     head_sha = ensure_head_matches_origin_main()
-    ensure_crates_io_version_exists(version)
-    action = plan_tag_action(tag_name, head_sha, args.force)
+    action = plan_tag_action(tag_name, head_sha)
+    print(f"Planned action: {action}")
+    ensure_force_policy(action, args.force)
 
     if action in {"create-and-push", "push-existing"}:
         print("Checking provenance guard: clean working tree/index at current HEAD snapshot...")
         ensure_clean_worktree_and_index()
-        current_head_sha = run_git("rev-parse", "HEAD").stdout.strip()
-        if current_head_sha != head_sha:
-            fail(
-                "HEAD changed during checks; aborting to avoid tagging an unexpected snapshot. "
-                f"expected {head_sha[:12]}, current {current_head_sha[:12]}"
-            )
+        ensure_head_stable(head_sha)
 
     if args.check:
-        print(f"Check mode: PASS (planned action: {action})")
+        print("Check mode: PASS")
         return 0
 
     execute_tag_action(tag_name, head_sha, action)

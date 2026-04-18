@@ -1,16 +1,22 @@
 [package]
 name = "kagi-mcp"
 description = "MCP stdio server for kagi-sdk"
-version.workspace = true
+version = "0.1.1"
 edition.workspace = true
 license.workspace = true
-publish = false
+readme = "README.md"
+repository = "https://github.com/kdcokenny/kagi-rs"
+homepage = "https://github.com/kdcokenny/kagi-rs"
+documentation = "https://docs.rs/kagi-mcp"
+rust-version = "1.94"
+keywords = ["kagi", "mcp", "server", "search", "rust"]
+categories = ["api-bindings", "command-line-utilities"]
 
 [lints]
 workspace = true
 
 [dependencies]
-kagi-sdk = { path = "../sdk" }
+kagi-sdk = { path = "../sdk", version = "=0.1.1" }
 rmcp = { version = "1.5", features = ["client", "transport-io"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }

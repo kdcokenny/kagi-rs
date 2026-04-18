@@ -15,19 +15,18 @@ import tomllib
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE_CARGO_TOML = REPO_ROOT / "Cargo.toml"
 MCP_CARGO_TOML = REPO_ROOT / "mcp" / "Cargo.toml"
 MCP_CRATE_NAME = "kagi-mcp"
-SEMVER_RELEASE_PATTERN = re.compile(r"^\d+\.\d+\.\d+$")
+RELEASE_VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+$")
+MCP_TAG_PATTERN = re.compile(r"^mcp-v\d+\.\d+\.\d+$")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="scripts/mcp-release-tag.py",
         description=(
-            "Create and push an MCP release tag in the format vX.Y.Z for the existing\n"
-            "GitHub tag-triggered release workflow. This helper does not touch SDK\n"
-            "bookkeeping tags (sdk-vX.Y.Z)."
+            "Create and push an MCP release tag in the format mcp-vX.Y.Z.\n"
+            "This helper is pre-tag only; it does not publish crates or binaries directly."
         ),
         epilog=(
             "Examples:\n"
@@ -35,9 +34,11 @@ def parse_args() -> argparse.Namespace:
             "  scripts/mcp-release-tag.py\n"
             "  scripts/mcp-release-tag.py --force\n\n"
             "Run this only when the intended MCP release snapshot is exactly the current\n"
-            "clean HEAD on origin/main.\n\n"
-            "--force is intentionally narrow: it is only accepted when the local vX.Y.Z\n"
-            "tag already exists at HEAD and origin is missing that same tag (safe push retry)."
+            "HEAD on origin/main. The pushed mcp-vX.Y.Z tag triggers automation that\n"
+            "publishes kagi-mcp to crates.io and then publishes GitHub release assets.\n\n"
+            "--force is intentionally narrow for non-check execution: it is only accepted\n"
+            "when the local mcp-vX.Y.Z tag already exists at HEAD and origin is missing\n"
+            "that same tag (safe push retry)."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -49,9 +50,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Retry pushing an already-correct existing local MCP tag when remote tag is absent.",
+        help=(
+            "Retry pushing an already-correct existing local MCP tag when remote tag is absent "
+            "(non-check runs only; invalid with --check)."
+        ),
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.check and args.force:
+        parser.error("--force cannot be combined with --check; --force is only for non-check execution.")
+    return args
 
 
 def fail(message: str) -> "Never":
@@ -84,20 +91,6 @@ def load_toml(path: Path) -> dict:
 
 
 def resolve_mcp_version() -> str:
-    workspace_data = load_toml(WORKSPACE_CARGO_TOML)
-    workspace_version = (
-        workspace_data.get("workspace", {})
-        .get("package", {})
-        .get("version")
-    )
-    if not isinstance(workspace_version, str) or not workspace_version.strip():
-        fail("workspace.package.version is missing or empty in Cargo.toml.")
-    if not SEMVER_RELEASE_PATTERN.fullmatch(workspace_version):
-        fail(
-            "workspace.package.version must be a plain release semver (X.Y.Z) for MCP "
-            f"release tagging (found {workspace_version!r})."
-        )
-
     mcp_data = load_toml(MCP_CARGO_TOML)
     package_table = mcp_data.get("package", {})
     package_name = package_table.get("name")
@@ -108,13 +101,24 @@ def resolve_mcp_version() -> str:
         )
 
     mcp_version = package_table.get("version")
-    if not isinstance(mcp_version, dict) or mcp_version.get("workspace") is not True:
+    if not isinstance(mcp_version, str) or not RELEASE_VERSION_PATTERN.fullmatch(mcp_version):
         fail(
-            "mcp/Cargo.toml must set `version.workspace = true` so workspace.package.version "
-            "remains the MCP release source of truth."
+            "mcp/Cargo.toml package.version must be an explicit release semver in X.Y.Z form "
+            f"(found {mcp_version!r})."
         )
 
-    return workspace_version
+    return mcp_version
+
+
+def derive_release_tag(version: str) -> str:
+    tag_name = f"mcp-v{version}"
+    if not MCP_TAG_PATTERN.fullmatch(tag_name):
+        fail(
+            "Derived MCP release tag does not match required grammar mcp-vX.Y.Z "
+            f"(derived {tag_name!r})."
+        )
+
+    return tag_name
 
 
 def ensure_head_matches_origin_main() -> str:
@@ -180,7 +184,7 @@ def get_remote_tag_target_commit(tag_name: str) -> str | None:
     fail(f"Could not resolve remote commit target for tag {tag_name!r}.")
 
 
-def plan_tag_action(tag_name: str, head_sha: str, force: bool) -> str:
+def plan_tag_action(tag_name: str, head_sha: str) -> str:
     local_tag_sha = get_local_tag_sha(tag_name)
     remote_tag_sha = get_remote_tag_target_commit(tag_name)
 
@@ -203,20 +207,34 @@ def plan_tag_action(tag_name: str, head_sha: str, force: bool) -> str:
                 f"Local tag {tag_name} already exists at {local_tag_sha[:12]}, not HEAD {head_sha[:12]}. "
                 "Refusing to rewrite MCP semver tags."
             )
-        if not force:
-            fail(
-                f"Local tag {tag_name} exists and points to HEAD, but origin is missing it. "
-                "Re-run with --force to retry pushing the existing correct local tag."
-            )
         return "push-existing"
+
+    return "create-and-push"
+
+
+def ensure_force_policy(action: str, force: bool) -> None:
+    if action == "push-existing":
+        if force:
+            return
+        fail(
+            "Planned action is push-existing, which is intentionally gated. "
+            "Re-run with --force to retry pushing the existing correct local tag."
+        )
 
     if force:
         fail(
             "--force is only allowed when retrying a push of an existing local MCP tag "
-            "that already points to HEAD."
+            "that already points to HEAD while origin is missing it."
         )
 
-    return "create-and-push"
+
+def ensure_head_stable(expected_head_sha: str) -> None:
+    current_head_sha = run_git("rev-parse", "HEAD").stdout.strip()
+    if current_head_sha != expected_head_sha:
+        fail(
+            "HEAD changed during checks; aborting to avoid tagging an unexpected snapshot. "
+            f"expected {expected_head_sha[:12]}, current {current_head_sha[:12]}"
+        )
 
 
 def execute_tag_action(tag_name: str, head_sha: str, action: str) -> None:
@@ -245,25 +263,24 @@ def main() -> int:
     args = parse_args()
 
     version = resolve_mcp_version()
-    tag_name = f"v{version}"
+    tag_name = derive_release_tag(version)
     print(f"Resolved MCP release version: {version}")
     print(f"Derived MCP tag: {tag_name}")
 
     head_sha = ensure_head_matches_origin_main()
-    action = plan_tag_action(tag_name, head_sha, args.force)
+    action = plan_tag_action(tag_name, head_sha)
+    print(f"Planned action: {action}")
+
+    if not args.check:
+        ensure_force_policy(action, args.force)
 
     if action in {"create-and-push", "push-existing"}:
         print("Checking provenance guard: clean working tree/index at current HEAD snapshot...")
         ensure_clean_worktree_and_index()
-        current_head_sha = run_git("rev-parse", "HEAD").stdout.strip()
-        if current_head_sha != head_sha:
-            fail(
-                "HEAD changed during checks; aborting to avoid tagging an unexpected snapshot. "
-                f"expected {head_sha[:12]}, current {current_head_sha[:12]}"
-            )
+        ensure_head_stable(head_sha)
 
     if args.check:
-        print(f"Check mode: PASS (planned action: {action})")
+        print("Check mode: PASS")
         return 0
 
     execute_tag_action(tag_name, head_sha, action)

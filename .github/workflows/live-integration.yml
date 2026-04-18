@@ -36,10 +36,10 @@ jobs:
             exit 0
           fi
 
-          if [[ "${GITHUB_REF}" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          if [[ "${GITHUB_REF}" =~ ^refs/tags/(sdk-v|mcp-v)[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             git fetch --no-tags --prune origin main
             if git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
-              echo "Official live run approved for release tag reachable from origin/main."
+              echo "Official live run approved for release channel tag reachable from origin/main."
               exit 0
             fi
 
@@ -47,7 +47,7 @@ jobs:
             exit 1
           fi
 
-          echo "::error::Official live runs require main branch or v*.*.* tag refs only."
+          echo "::error::Official live runs require main branch or sdk-v*.*.* / mcp-v*.*.* tag refs only."
           exit 1
 
   live-official:
