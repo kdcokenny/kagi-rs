@@ -1,0 +1,39 @@
+name: PR Title
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+
+permissions:
+  pull-requests: read
+
+jobs:
+  validate-title:
+    name: Validate pull request title
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check title format
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+
+          title_pattern='^(feat|fix|docs|chore|refactor|test|build|ci|perf|style|revert)(\([a-z0-9._/-]+\))?(!)?: .+'
+
+          if [[ -z "${PR_TITLE}" ]]; then
+            echo "PR title must not be empty."
+            exit 1
+          fi
+
+          if [[ ! "${PR_TITLE}" =~ ${title_pattern} ]]; then
+            echo "PR title does not match required format."
+            echo "Expected: <type>(optional-scope): <summary>"
+            echo "Allowed types: feat, fix, docs, chore, refactor, test, build, ci, perf, style, revert"
+            echo "Example: feat(sdk): add live integration workflow coverage"
+            exit 1
+          fi

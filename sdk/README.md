@@ -164,3 +164,19 @@ cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
+
+## Live integration tests (manual-only in v1)
+
+The SDK includes dedicated ignored live integration tests:
+
+- `sdk/tests/live_official.rs`
+- `sdk/tests/live_session.rs`
+
+They are run manually through the repository's `live-integration.yml` workflow and are not part of normal PR CI.
+
+### Environment variables
+
+- Official test: `KAGI_API_KEY` (required), `KAGI_BASE_URL` (optional)
+- Session test: `KAGI_SESSION_TOKEN` (required), `KAGI_BASE_URL` (optional)
+
+Outside GitHub environments, these ignored tests return cleanly when required credentials are absent.

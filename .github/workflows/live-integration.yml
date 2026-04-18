@@ -1,0 +1,195 @@
+name: Live Integration
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Select live target"
+        required: true
+        type: choice
+        options:
+          - official
+          - session
+
+permissions: {}
+
+jobs:
+  validate-official-ref:
+    name: Validate official live dispatch ref
+    if: ${{ inputs.target == 'official' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Enforce allowed refs for official live runs
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            echo "Official live run approved for main branch."
+            exit 0
+          fi
+
+          if [[ "${GITHUB_REF}" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            git fetch --no-tags --prune origin main
+            if git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+              echo "Official live run approved for release tag reachable from origin/main."
+              exit 0
+            fi
+
+            echo "::error::Tag ${GITHUB_REF_NAME} must point to a commit already reachable from origin/main."
+            exit 1
+          fi
+
+          echo "::error::Official live runs require main branch or v*.*.* tag refs only."
+          exit 1
+
+  live-official:
+    name: SDK live official surface
+    if: ${{ inputs.target == 'official' }}
+    needs:
+      - validate-official-ref
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    concurrency:
+      group: live-integration-kagi-live-official
+      cancel-in-progress: false
+    environment:
+      name: kagi-live-official
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+
+      - name: Build official live SDK test binary (no secrets)
+        id: build-live-official
+        run: |
+          set -euo pipefail
+
+          build_log="$(mktemp)"
+          cargo test -p kagi-sdk --test live_official --locked --no-run --message-format=json > "${build_log}"
+
+          python - "${build_log}" <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          build_log = pathlib.Path(sys.argv[1])
+          test_binary = None
+
+          for line in build_log.read_text(encoding="utf-8").splitlines():
+              try:
+                  message = json.loads(line)
+              except json.JSONDecodeError:
+                  continue
+
+              if message.get("reason") != "compiler-artifact":
+                  continue
+
+              target = message.get("target", {})
+              if target.get("name") != "live_official":
+                  continue
+
+              executable = message.get("executable")
+              if executable:
+                  test_binary = executable
+
+          if not test_binary:
+              raise SystemExit("Failed to locate compiled live_official test binary.")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"test-binary={test_binary}\\n")
+          PY
+
+      - name: Run official live SDK test binary
+        env:
+          KAGI_API_KEY: ${{ secrets.KAGI_API_KEY }}
+          KAGI_BASE_URL: ${{ secrets.KAGI_BASE_URL }}
+        run: |
+          set -euo pipefail
+          "${{ steps.build-live-official.outputs.test-binary }}" --ignored --test-threads=1
+
+  live-session:
+    name: SDK live session surface
+    if: ${{ inputs.target == 'session' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    concurrency:
+      group: live-integration-kagi-live-session
+      cancel-in-progress: false
+    environment:
+      name: kagi-live-session
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+
+      - name: Build session live SDK test binary (no secrets)
+        id: build-live-session
+        run: |
+          set -euo pipefail
+
+          build_log="$(mktemp)"
+          cargo test -p kagi-sdk --test live_session --locked --no-run --message-format=json > "${build_log}"
+
+          python - "${build_log}" <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          build_log = pathlib.Path(sys.argv[1])
+          test_binary = None
+
+          for line in build_log.read_text(encoding="utf-8").splitlines():
+              try:
+                  message = json.loads(line)
+              except json.JSONDecodeError:
+                  continue
+
+              if message.get("reason") != "compiler-artifact":
+                  continue
+
+              target = message.get("target", {})
+              if target.get("name") != "live_session":
+                  continue
+
+              executable = message.get("executable")
+              if executable:
+                  test_binary = executable
+
+          if not test_binary:
+              raise SystemExit("Failed to locate compiled live_session test binary.")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"test-binary={test_binary}\\n")
+          PY
+
+      - name: Run session live SDK test binary
+        env:
+          KAGI_SESSION_TOKEN: ${{ secrets.KAGI_SESSION_TOKEN }}
+          KAGI_BASE_URL: ${{ secrets.KAGI_BASE_URL }}
+        run: |
+          set -euo pipefail
+          "${{ steps.build-live-session.outputs.test-binary }}" --ignored --test-threads=1

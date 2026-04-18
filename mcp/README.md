@@ -83,3 +83,7 @@ cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
+
+## CI/CD note
+
+In v1, live integration coverage is SDK-only. MCP live integration tests are intentionally deferred to v2.
