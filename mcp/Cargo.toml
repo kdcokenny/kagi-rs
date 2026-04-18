@@ -1,7 +1,7 @@
 [package]
 name = "kagi-mcp"
 description = "MCP stdio server for kagi-sdk"
-version = "0.1.1"
+version = "0.1.2"
 edition.workspace = true
 license.workspace = true
 readme = "README.md"
@@ -16,7 +16,7 @@ categories = ["api-bindings", "command-line-utilities"]
 workspace = true
 
 [dependencies]
-kagi-sdk = { path = "../sdk", version = "=0.1.1" }
+kagi-sdk = { path = "../sdk", version = "=0.1.2" }
 rmcp = { version = "1.5", features = ["client", "transport-io"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
