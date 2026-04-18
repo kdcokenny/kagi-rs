@@ -27,7 +27,7 @@ If your crate is outside this repository, point `path` to this `sdk/` directory 
 
 ```toml
 [dependencies]
-kagi-sdk = "0.1.0"
+kagi-sdk = "0.1.1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 

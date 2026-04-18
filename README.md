@@ -24,7 +24,7 @@ Rust-native tooling workspace for Kagi.
 - **Workflow boundary in this phase**:
   - do not repurpose `.github/workflows/release.yml`
   - do not add a dedicated SDK publish workflow yet
-- **Shared versioning choice**: workspace version remains shared via `workspace.package.version = "0.1.0"` and is consumed by workspace crates.
+- **Shared versioning choice**: workspace version remains shared via `workspace.package.version = "0.1.1"` and is consumed by workspace crates.
 
 ### SDK post-publish tag helper (local)
 
