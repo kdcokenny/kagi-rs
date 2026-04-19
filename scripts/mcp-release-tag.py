@@ -26,7 +26,7 @@ def parse_args() -> argparse.Namespace:
         prog="scripts/mcp-release-tag.py",
         description=(
             "Create and push an MCP release tag in the format mcp-vX.Y.Z.\n"
-            "This helper is pre-tag only; it does not publish crates or binaries directly."
+            "This helper is pre-tag only; it does not publish crates directly."
         ),
         epilog=(
             "Examples:\n"
@@ -35,7 +35,7 @@ def parse_args() -> argparse.Namespace:
             "  scripts/mcp-release-tag.py --force\n\n"
             "Run this only when the intended MCP release snapshot is exactly the current\n"
             "HEAD on origin/main. The pushed mcp-vX.Y.Z tag triggers automation that\n"
-            "publishes kagi-mcp to crates.io and then publishes GitHub release assets.\n\n"
+            "publishes kagi-mcp to crates.io.\n\n"
             "--force is intentionally narrow for non-check execution: it is only accepted\n"
             "when the local mcp-vX.Y.Z tag already exists at HEAD and origin is missing\n"
             "that same tag (safe push retry)."

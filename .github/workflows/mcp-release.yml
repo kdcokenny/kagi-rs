@@ -5,16 +5,15 @@ on:
     tags:
       - "mcp-v*.*.*"
 
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
-  validate-release:
-    name: Validate MCP release tag and publish gates
+  publish-crate:
+    name: Validate and publish kagi-mcp
     if: github.repository == 'kdcokenny/kagi-rs'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
@@ -308,125 +307,7 @@ jobs:
       - name: Dry-run publish
         run: cargo publish --locked -p kagi-mcp --dry-run
 
-  build-binaries:
-    name: Build kagi-mcp (${{ matrix.target }})
-    if: github.repository == 'kdcokenny/kagi-rs'
-    needs:
-      - validate-release
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            binary_name: kagi-mcp
-          - target: x86_64-apple-darwin
-            os: macos-13
-            binary_name: kagi-mcp
-          - target: aarch64-apple-darwin
-            os: macos-14
-            binary_name: kagi-mcp
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            binary_name: kagi-mcp.exe
-    steps:
-      - name: Checkout
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-
-      - name: Build release binary
-        run: cargo build -p kagi-mcp --release --locked --target ${{ matrix.target }}
-
-      - name: Collect release artifact (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/kagi-mcp-${GITHUB_REF_NAME}-${{ matrix.target }}"
-
-      - name: Collect release artifact (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Path dist -Force | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/kagi-mcp-$env:GITHUB_REF_NAME-${{ matrix.target }}.exe"
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: kagi-mcp-${{ matrix.target }}
-          path: dist/*
-
-  publish-crate:
-    name: Publish kagi-mcp to crates.io
-    if: github.repository == 'kdcokenny/kagi-rs'
-    needs:
-      - validate-release
-      - build-binaries
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-
       - name: Publish kagi-mcp
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish --locked -p kagi-mcp
-
-  publish-release:
-    name: Publish GitHub release assets
-    if: github.repository == 'kdcokenny/kagi-rs'
-    needs:
-      - build-binaries
-      - publish-crate
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: write
-    steps:
-      - name: Download built artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          pattern: kagi-mcp-*
-          merge-multiple: true
-          path: dist
-
-      - name: Generate checksums
-        run: |
-          set -euo pipefail
-          cd dist
-          sha256sum * > SHA256SUMS
-
-      - name: Publish release assets
-        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2.2.1
-        with:
-          files: |
-            dist/*
-          fail_on_unmatched_files: true
-          generate_release_notes: true
-
-      - name: Recovery posture on asset publication failure
-        if: ${{ failure() }}
-        run: |
-          echo "::error::Crate publication must never be retried after a successful publish."
-          echo "::error::Fix GitHub release asset/checksum publication separately and safely."

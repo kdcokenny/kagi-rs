@@ -19,7 +19,7 @@ Rust-native tooling workspace for Kagi.
 - `mcp/Cargo.toml` pins the SDK edge with an exact table-form requirement (`kagi-sdk = { version = "=X.Y.Z" }`) and may include a local path only when paired with that exact same pinned version (`kagi-sdk = { path = "../sdk", version = "=X.Y.Z" }`).
 - Tags are channel-specific and non-overlapping:
   - SDK publish: `sdk-v*.*.*` → `.github/workflows/sdk-publish.yml`
-  - MCP crates.io publish + GitHub binary release: `mcp-v*.*.*` → `.github/workflows/mcp-release.yml`
+  - MCP crates.io publish: `mcp-v*.*.*` → `.github/workflows/mcp-release.yml`
 - Bare `v*.*.*` tags are not a release path.
 
 ### crates.io token policy (shared secret)
@@ -32,9 +32,9 @@ Rust-native tooling workspace for Kagi.
 
 ### MCP release recovery posture
 
-- `mcp-vX.Y.Z` publishes to crates.io first, then publishes GitHub binaries/checksums.
-- If crates.io publish succeeds but GitHub asset publication fails, **do not republish the crate**.
-- Fix the GitHub release issue and complete asset publication separately/safely against the same tag.
+- `mcp-vX.Y.Z` is crates.io-only for `kagi-mcp` (no GitHub binary/checksum assets).
+- If crates.io publish succeeds, that MCP release is complete.
+- Never reuse a previously published MCP version/tag.
 
 ### MCP release tag helper (local pre-tag helper)
 
@@ -154,7 +154,7 @@ The repository uses six workflows under `.github/workflows/`:
 | `security.yml` | PR dependency risk checks plus scheduled/mainline Rust dependency auditing |
 | `live-integration.yml` | Manual SDK live integration tests routed to one protected environment |
 | `sdk-publish.yml` | Tag-driven, guarded crates.io publish pipeline for `kagi-sdk` |
-| `mcp-release.yml` | Tag-driven, guarded crates.io publish + GitHub binary release pipeline for `kagi-mcp` |
+| `mcp-release.yml` | Tag-driven, guarded crates.io-only publish pipeline for `kagi-mcp` |
 
 No separate `examples.yml` workflow is used in v1.
 
@@ -196,4 +196,4 @@ Before enabling live runs, configure repository environments in GitHub:
 | `security.yml` | `pull_request`, `push` (`main`), weekly schedule | PR: `contents: read`, `pull-requests: read`; main/schedule: `contents: read` | None | PR runs dependency-review only; main/schedule run `cargo deny` and `cargo audit` |
 | `live-integration.yml` | `workflow_dispatch` only | `contents: read` (job-scoped) | Route by `target` to exactly one environment (`kagi-live-official` or `kagi-live-session`) | Serialized concurrency per environment, hard timeouts, compile live test binaries in no-secret steps, then execute binaries in secret-bearing steps only, official target preflight enforces main-or-`sdk-v*.*.*`/`mcp-v*.*.*`-from-main before environment job, SDK live tests only |
 | `sdk-publish.yml` | tag pushes `sdk-v*.*.*` only | `contents: read` | None | Canonical repo guard, tag commit reachable from `origin/main`, tag version must match `sdk/Cargo.toml`, full workspace quality gates, package list + dry-run, crates.io existence check, then `cargo publish --locked -p kagi-sdk` using shared `CARGO_REGISTRY_TOKEN` |
-| `mcp-release.yml` | tag pushes `mcp-v*.*.*` only | validate/build/publish: `contents: read`; release upload: `contents: write` | None | Canonical repo guard, tag commit reachable from `origin/main`, tag version must match `mcp/Cargo.toml`, enforce exact table-form `kagi-sdk` dependency (`kagi-sdk = { version = "=X.Y.Z" }` or `kagi-sdk = { path = "../sdk", version = "=X.Y.Z" }`) and require that SDK version on crates.io, full workspace quality gates, package list + dry-run, build exactly four `kagi-mcp` targets, publish crate via shared `CARGO_REGISTRY_TOKEN`, then publish checksums + release assets |
+| `mcp-release.yml` | tag pushes `mcp-v*.*.*` only | `contents: read` | None | Canonical repo guard, tag commit reachable from `origin/main`, tag version must match `mcp/Cargo.toml`, enforce exact table-form `kagi-sdk` dependency (`kagi-sdk = { version = "=X.Y.Z" }` or `kagi-sdk = { path = "../sdk", version = "=X.Y.Z" }`) and require that SDK version on crates.io, fail fast if `kagi-mcp@X.Y.Z` already exists, full workspace quality gates, package list + dry-run, then publish crate via shared `CARGO_REGISTRY_TOKEN` |
