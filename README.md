@@ -1,137 +1,54 @@
 # kagi-rs
 
-Rust-native tooling workspace for Kagi.
-
-`kagi-rs` currently ships an SDK crate and an MCP crate built on top of that SDK.
+Rust-native workspace for building Kagi integrations with a typed SDK and an MCP server for agents.
 
 ## Workspace status
 
-| Path | Crate | Status | Notes |
+| Path | Package | Status | Purpose |
 |---|---|---|---|
-| `sdk/` | `kagi-sdk` | ✅ Available | Typed Rust SDK with explicit official-api and session-web surfaces |
-| `cli/` | *(planned)* | ⏳ Planned | Reserved for a future end-user command-line interface |
-| `mcp/` | `kagi-mcp` | ✅ Available | Publishable MCP stdio server exposing `kagi_search` and `kagi_summarize` |
+| `sdk/` | `kagi-sdk` | ✅ Available | Rust SDK with explicit official-api and session-web surfaces |
+| `mcp/` | `kagi-mcp` | ✅ Available | MCP server (v1: stdio-only, tools-only) built on `kagi-sdk` |
+| `cli/` | *(planned)* | ⏳ Planned | Reserved path for a future end-user CLI crate |
+| `docs/` | n/a | ✅ Available | Reference and maintainer/operator documentation |
 
-## Release tag policy (dual-channel automation)
+## Quickstart (canonical)
 
-- `sdk/` (`kagi-sdk`) has its own explicit crate version in `sdk/Cargo.toml`.
-- `mcp/` (`kagi-mcp`) has its own explicit crate version in `mcp/Cargo.toml` and is publishable on crates.io.
-- `mcp/Cargo.toml` pins the SDK edge with an exact table-form requirement (`kagi-sdk = { version = "=X.Y.Z" }`) and may include a local path only when paired with that exact same pinned version (`kagi-sdk = { path = "../sdk", version = "=X.Y.Z" }`).
-- Tags are channel-specific and non-overlapping:
-  - SDK crates.io publish + GitHub Release object: `sdk-v*.*.*` → `.github/workflows/sdk-publish.yml`
-  - MCP crates.io publish + GitHub Release object: `mcp-v*.*.*` → `.github/workflows/mcp-release.yml`
-- Bare `v*.*.*` tags are not a release path.
-
-### crates.io token policy (shared secret)
-
-- Both release workflows use one repository secret: `CARGO_REGISTRY_TOKEN`.
-- Bootstrap for first MCP publish:
-  1. create token with both scopes (`publish-new` + `publish-update`)
-  2. run first successful `mcp-vX.Y.Z` release
-  3. rotate token to `publish-update` only for steady-state operation
-
-### MCP release recovery posture
-
-- `mcp-vX.Y.Z` publishes `kagi-mcp` to crates.io and upserts an assetless GitHub Release object.
-- If crates.io publish already succeeded on a prior attempt, rerunning reconciles only the GitHub Release object (no duplicate publish).
-- Never reuse a previously published MCP version/tag.
-
-### MCP release tag helper (local pre-tag helper)
-
-Use `scripts/mcp-release-tag.py` before creating/pushing an MCP release tag.
-
-Safety contract enforced by the helper:
-
-1. Reads MCP version directly from `mcp/Cargo.toml` (`name = "kagi-mcp"`, explicit `version = "X.Y.Z"`).
-2. Derives only `mcp-v<version>`.
-3. Requires `HEAD == origin/main`.
-4. Refuses to rewrite existing semver tags.
-5. Allows `--force` only for a non-`--check` safe push retry when the local tag already points to `HEAD` and origin is missing that tag.
-6. Requires a clean worktree/index only for create/push actions.
-7. `--check` is non-destructive and prints resolved version, derived tag, and planned action (`noop`, `push-existing`, or `create-and-push`), and still enforces the clean-tree/head-stability provenance guard when the planned action is mutating (`push-existing` or `create-and-push`). In MCP helper check mode, `push-existing` preview does not require `--force`; `--check --force` is rejected as invalid.
+Run the MCP server locally from source:
 
 ```bash
-scripts/mcp-release-tag.py --check
-scripts/mcp-release-tag.py
-scripts/mcp-release-tag.py --force
-```
-
-### SDK release tag helper (local pre-tag helper)
-
-Use `scripts/sdk-release-tag.py` before creating/pushing an SDK publish tag.
-
-Safety contract enforced by the helper:
-
-1. Reads SDK version directly from `sdk/Cargo.toml` (`name = "kagi-sdk"`, explicit `version = "X.Y.Z"`).
-2. Derives only `sdk-v<version>`.
-3. Requires `HEAD == origin/main`.
-4. Refuses to rewrite existing semver tags.
-5. Allows `--force` only for a safe push retry when the local tag already points to `HEAD` and origin is missing that tag.
-6. Requires a clean worktree/index only for create/push actions.
-7. `--check` is non-destructive and prints resolved version, derived tag, and planned action (`noop`, `push-existing`, or `create-and-push`), and still enforces the clean-tree/head-stability provenance guard when the planned action is mutating (`push-existing` or `create-and-push`).
-
-```bash
-scripts/sdk-release-tag.py --check
-scripts/sdk-release-tag.py
-scripts/sdk-release-tag.py --force
-```
-
-## Quickstart (workspace)
-
-```bash
-# from repo root
-cargo test --workspace
-
-# run SDK examples
-cargo run -p kagi-sdk --example bot_token
-cargo run -p kagi-sdk --example session_token
-
-# run MCP stdio server
 KAGI_API_KEY=... cargo run -p kagi-mcp
 ```
 
-For SDK usage details, see [`sdk/README.md`](./sdk/README.md).
+This starts a stdio MCP server you can register in Claude Code, Codex, or OpenCode.
 
-## Dual-surface SDK model
+## Choose your path
 
-The SDK makes Kagi's two protocol surfaces explicit:
+- **Building Rust apps/services:** start in [`sdk/README.md`](./sdk/README.md)
+- **Connecting agent hosts to Kagi:** start in [`mcp/README.md`](./mcp/README.md)
+- **CLI roadmap/status:** see [`cli/README.md`](./cli/README.md)
+- **Docs index (user + reference + maintainer):** see [`docs/README.md`](./docs/README.md)
 
-1. **Official API surface**
-   - Auth: `Authorization: Bot <token>`
-   - Route families: `/api/v0/*`, `/api/v1/*` (in-scope subset only)
-   - Response shape: JSON envelopes
+## Two surfaces, one SDK
 
-2. **Session web surface**
-   - Auth: `Cookie: kagi_session=<token>`
-   - Routes: `/html/search`, `/mother/summary_labs`, `/mother/summary_labs/`
-   - Response shape:
-     - search: HTML parsing
-     - summarize: JSON parsing
-     - summarize_stream: framed stream parsing (advanced)
+`kagi-sdk` keeps Kagi's protocol surfaces explicit:
 
-Authoritative route/auth/version scope lives in [`docs/endpoint-auth-version-matrix.md`](./docs/endpoint-auth-version-matrix.md).
+| Surface | Auth | Route families | Response shape |
+|---|---|---|---|
+| Official API | `Authorization: Bot <token>` | `/api/v0/*`, `/api/v1/*` (in-scope subset) | JSON envelopes |
+| Session web | `Cookie: kagi_session=<token>` | `/html/search`, `/mother/summary_labs` | HTML / JSON / framed stream |
 
-## Design principles
+Authoritative endpoint/auth/version coverage: [`docs/endpoint-auth-version-matrix.md`](./docs/endpoint-auth-version-matrix.md).
 
-- **Explicit protocol boundaries**: official API and session web are separate SDK entrypoints.
-- **Fail-fast behavior**: unsupported auth/surface combinations and invalid response shapes fail loudly.
-- **Typed inputs at boundaries**: request constructors parse and reject invalid data early.
-- **Lean foundation**: keep dependencies and surface area focused while expanding deliberately.
+## Docs map
 
-## Current workspace layout
-
-```text
-kagi-rs/
-├── sdk/      # implemented Rust SDK crate
-├── mcp/      # implemented Rust MCP stdio server crate
-└── docs/     # endpoint/auth/version matrix and project docs
-```
-
-## Planned additions
-
-- `cli/`: future command-line crate built on `kagi-sdk`
-
-`cli/` remains a planned next step and is not an active workspace crate yet.
+| Need | Go to |
+|---|---|
+| Workspace onboarding | [`README.md`](./README.md) |
+| SDK usage and API surfaces | [`sdk/README.md`](./sdk/README.md) |
+| MCP host setup and agent usage | [`mcp/README.md`](./mcp/README.md) |
+| CLI planned status | [`cli/README.md`](./cli/README.md) |
+| Endpoint/auth/version source of truth | [`docs/endpoint-auth-version-matrix.md`](./docs/endpoint-auth-version-matrix.md) |
+| Release + workflow policy (maintainer) | [`docs/releasing.md`](./docs/releasing.md) |
 
 ## Development commands
 
@@ -143,57 +60,6 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
 
-## GitHub Actions workflows (v1)
+## Contributor and maintainer docs
 
-The repository uses six workflows under `.github/workflows/`:
-
-| Workflow | Purpose |
-|---|---|
-| `ci.yml` | Required merge gate for formatting, linting, tests, doc-tests, and workspace build |
-| `pr-title.yml` | Metadata-only PR title validation on `pull_request_target` |
-| `security.yml` | PR dependency risk checks plus scheduled/mainline Rust dependency auditing |
-| `live-integration.yml` | Manual SDK live integration tests routed to one protected environment |
-| `sdk-publish.yml` | Tag-driven, guarded crates.io publish pipeline for `kagi-sdk` plus GitHub Release object upsert |
-| `mcp-release.yml` | Tag-driven, guarded crates.io publish pipeline for `kagi-mcp` plus GitHub Release object upsert |
-
-No separate `examples.yml` workflow is used in v1.
-
-## Manual live-test policy (v1)
-
-Live integration runs are intentionally manual-only via `workflow_dispatch` in `live-integration.yml`.
-
-- Input: `target` (`official` or `session`)
-- Routing: exactly one live job path per dispatch
-- Triggers excluded in v1: no PR, no push, no schedule
-- SDK live test targets only (MCP live tests are deferred to v2)
-- Official target preflight: dispatch ref must be `main`, `sdk-v*.*.*`, or `mcp-v*.*.*` tag whose commit is reachable from `origin/main` before environment-gated jobs run
-- Secret handling: live test binaries are compiled in no-secret steps, then executed in separate secret-bearing steps
-
-## Protected environment setup checklist (operator-facing)
-
-Before enabling live runs, configure repository environments in GitHub:
-
-1. Create both environments exactly:
-   - `kagi-live-official`
-   - `kagi-live-session`
-2. Attach required reviewers (at least one reviewer per environment).
-3. Set self-review policy:
-   - `kagi-live-official`: **prevent self-review disabled** in v1
-   - `kagi-live-session`: **prevent self-review enabled**
-4. Apply deployment branch/tag restrictions:
-   - `kagi-live-official`: allow `main` and manual dispatch against `sdk-v*.*.*` and/or `mcp-v*.*.*` tags
-   - `kagi-live-session`: allow `main` only
-5. Load only approved environment secrets:
-   - `kagi-live-official`: `KAGI_API_KEY` and optional `KAGI_BASE_URL`
-   - `kagi-live-session`: `KAGI_SESSION_TOKEN` and optional `KAGI_BASE_URL`
-
-## Final v1 workflow contract
-
-| Workflow | Triggers | Minimal permissions | Environments / routing | Key contract rules |
-|---|---|---|---|---|
-| `ci.yml` | `pull_request`, `push` (`main`), `merge_group` | `contents: read` | None | Required merge gate shape, no path filters, non-release concurrency cancellation |
-| `pr-title.yml` | `pull_request_target` | `pull-requests: read` | None | Metadata-only title check, no checkout, no secret access |
-| `security.yml` | `pull_request`, `push` (`main`), weekly schedule | PR: `contents: read`, `pull-requests: read`; main/schedule: `contents: read` | None | PR runs dependency-review only; main/schedule run `cargo deny` and `cargo audit` |
-| `live-integration.yml` | `workflow_dispatch` only | `contents: read` (job-scoped) | Route by `target` to exactly one environment (`kagi-live-official` or `kagi-live-session`) | Serialized concurrency per environment, hard timeouts, compile live test binaries in no-secret steps, then execute binaries in secret-bearing steps only, official target preflight enforces main-or-`sdk-v*.*.*`/`mcp-v*.*.*`-from-main before environment job, SDK live tests only |
-| `sdk-publish.yml` | tag pushes `sdk-v*.*.*` only | publish job: `contents: read`; release job: `contents: write` | None | Canonical repo guard, tag commit reachable from `origin/main`, tag/version invariant check, run-attempt-aware publish decision (`published_on_first_attempt`, `published_on_retry`, `recovered_after_publish`, `conflict`), full workspace quality gates only when publish is required, publish crate via shared `CARGO_REGISTRY_TOKEN`, then upsert an assetless GitHub Release object via `GITHUB_TOKEN` |
-| `mcp-release.yml` | tag pushes `mcp-v*.*.*` only | publish job: `contents: read`; release job: `contents: write` | None | Canonical repo guard, tag commit reachable from `origin/main`, tag/version invariant check, enforce exact table-form `kagi-sdk` dependency (`kagi-sdk = { version = "=X.Y.Z" }` or `kagi-sdk = { path = "../sdk", version = "=X.Y.Z" }`) and require that SDK version on crates.io, run-attempt-aware publish decision (`published_on_first_attempt`, `published_on_retry`, `recovered_after_publish`, `conflict`), full workspace quality gates only when publish is required, publish crate via shared `CARGO_REGISTRY_TOKEN`, then upsert an assetless GitHub Release object via `GITHUB_TOKEN` |
+Contributor onboarding remains in package READMEs; maintainer/operator policy lives in [`docs/releasing.md`](./docs/releasing.md).

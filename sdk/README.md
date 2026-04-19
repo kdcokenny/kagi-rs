@@ -1,29 +1,21 @@
 # kagi-sdk
 
-Rust SDK for Kagi with an explicit two-surface model:
+Typed Rust SDK for Kagi with explicit official-api and session-web surfaces.
 
-- **Official API surface**: `Authorization: Bot <token>`
-- **Session web surface**: `Cookie: kagi_session=<token>`
+## Features at a glance
 
-The crate is designed to make those protocol boundaries obvious in code through separate namespaces and typed request models.
+| Feature | What you get |
+|---|---|
+| Explicit protocol boundaries | Separate `official_api()` and `session_web()` clients |
+| Typed request models | Constructor-level validation for common invalid input |
+| Fail-fast auth/surface checks | Invalid credential/surface combinations fail before request execution |
+| Endpoint scope clarity | v1 support tracked in [`../docs/endpoint-auth-version-matrix.md`](../docs/endpoint-auth-version-matrix.md) |
 
 ## Install
 
-### A) Local development in this repository
+Choose one installation mode:
 
-`path` is resolved relative to the consuming crate's `Cargo.toml`.
-
-For a sibling crate in this repo (for example future `cli/` or `mcp/`), use:
-
-```toml
-[dependencies]
-kagi-sdk = { path = "../sdk" }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-```
-
-If your crate is outside this repository, point `path` to this `sdk/` directory using an appropriate relative or absolute path.
-
-### B) crates.io
+### crates.io (recommended)
 
 ```toml
 [dependencies]
@@ -31,7 +23,15 @@ kagi-sdk = "0.1.3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
-### C) External usage from GitHub
+### Path dependency (same workspace or local checkout)
+
+```toml
+[dependencies]
+kagi-sdk = { path = "../sdk" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+```
+
+### Git dependency (unreleased revisions)
 
 ```toml
 [dependencies]
@@ -39,23 +39,22 @@ kagi-sdk = { git = "https://github.com/kdcokenny/kagi-rs", package = "kagi-sdk" 
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
-Optionally pin to a revision for reproducibility:
+## Choose your surface
 
-```toml
-kagi-sdk = { git = "https://github.com/kdcokenny/kagi-rs", package = "kagi-sdk", rev = "<commit-hash>" }
-```
+| Use case | SDK surface | Credential |
+|---|---|---|
+| Kagi official API routes | `client.official_api()?` | `BotToken` (commonly from `KAGI_API_KEY`) |
+| Kagi session-web routes | `client.session_web()?` | `SessionToken` (commonly from `KAGI_SESSION_TOKEN`) |
 
-If you need an unreleased revision, you can depend on the repository directly.
-
-## Quickstart: official API (bot token)
+## Quickstart (canonical: official API)
 
 ```rust
-use kagi_sdk::{BotToken, KagiClient};
 use kagi_sdk::official_api::models::SearchRequest;
+use kagi_sdk::{BotToken, KagiClient};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let token = BotToken::new(std::env::var("KAGI_BOT_TOKEN")?)?;
+    let token = BotToken::new(std::env::var("KAGI_API_KEY")?)?;
     let client = KagiClient::with_bot_token(token)?;
     let api = client.official_api()?;
 
@@ -65,11 +64,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-## Quickstart: session web (session token)
+## Session quickstart (alternate surface)
 
 ```rust
-use kagi_sdk::{KagiClient, SessionToken};
 use kagi_sdk::session_web::models::{SearchRequest, SummarizeRequest};
+use kagi_sdk::{KagiClient, SessionToken};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -78,8 +77,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let web = client.session_web()?;
 
     let search = web.search(SearchRequest::new("kagi rust sdk")?).await?;
-    let summary = web.summarize(SummarizeRequest::from_url("https://example.com")?).await?;
-    println!("{} results, summary chars: {}", search.results.len(), summary.markdown.len());
+    let summary = web
+        .summarize(SummarizeRequest::from_url("https://example.com")?)
+        .await?;
+
+    println!("results={}, summary_len={}", search.results.len(), summary.markdown.len());
     Ok(())
 }
 ```
@@ -106,44 +108,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 | GET or POST | `/mother/summary_labs` or `/mother/summary_labs/` | `session_web.summarize(...)` |
 | GET or POST | `/mother/summary_labs` or `/mother/summary_labs/` | `session_web.summarize_stream(...)` *(advanced)* |
 
-## Why two surfaces?
-
-Kagi uses two distinct protocols with different auth, routes, and response formats.
-
-- Official API is JSON-envelope based and bot-token authenticated.
-- Session web is session-cookie authenticated with three response modes:
-  - `search(...)` parses HTML
-  - `summarize(...)` parses JSON
-  - `summarize_stream(...)` parses framed stream output (advanced)
-
-The SDK keeps those surfaces separate and performs runtime pre-request checks so unsupported credential/surface combinations fail loudly.
-
 ## Error handling
 
 Most methods return `Result<_, kagi_sdk::KagiError>`.
 
-Common categories include:
+Common categories:
 
 - invalid credential/input/configuration
-- unsupported auth/surface combinations
+- unsupported auth/surface combination
 - unauthorized bot token or invalid session
 - transport failures
 - parse failures
-- API-domain envelope failures
+- API envelope failures
 
-```rust
-use kagi_sdk::{BotToken, KagiClient, KagiError};
-use kagi_sdk::official_api::models::SearchRequest;
-
-async fn run() -> Result<(), KagiError> {
-    let client = KagiClient::with_bot_token(BotToken::new("your-token")?)?;
-    let api = client.official_api()?;
-    let _response = api.search(SearchRequest::new("tokio")?).await?;
-    Ok(())
-}
-```
-
-## Builder and config example
+## Advanced configuration
 
 ```rust
 use std::time::Duration;
@@ -161,7 +139,7 @@ fn build_client() -> Result<KagiClient, kagi_sdk::KagiError> {
 }
 ```
 
-## Development
+## Development and live-test notes
 
 From workspace root:
 
@@ -171,18 +149,9 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
 
-## Live integration tests (manual-only in v1)
+Live integration tests are manual-only in v1 via `live-integration.yml`:
 
-The SDK includes dedicated ignored live integration tests:
+- `sdk/tests/live_official.rs` expects `KAGI_API_KEY` (optional `KAGI_BASE_URL`)
+- `sdk/tests/live_session.rs` expects `KAGI_SESSION_TOKEN` (optional `KAGI_BASE_URL`)
 
-- `sdk/tests/live_official.rs`
-- `sdk/tests/live_session.rs`
-
-They are run manually through the repository's `live-integration.yml` workflow and are not part of normal PR CI.
-
-### Environment variables
-
-- Official test: `KAGI_API_KEY` (required), `KAGI_BASE_URL` (optional)
-- Session test: `KAGI_SESSION_TOKEN` (required), `KAGI_BASE_URL` (optional)
-
-Outside GitHub environments, these ignored tests return cleanly when required credentials are absent.
+For release/workflow policy, see [`../docs/releasing.md`](../docs/releasing.md).

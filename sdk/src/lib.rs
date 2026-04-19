@@ -27,7 +27,7 @@
 //! use kagi_sdk::official_api::models::SearchRequest;
 //!
 //! # async fn run() -> Result<(), kagi_sdk::KagiError> {
-//! let token = BotToken::new(std::env::var("KAGI_BOT_TOKEN").expect("set KAGI_BOT_TOKEN"))?;
+//! let token = BotToken::new(std::env::var("KAGI_API_KEY").expect("set KAGI_API_KEY"))?;
 //! let client = KagiClient::with_bot_token(token)?;
 //! let api = client.official_api()?;
 //!
