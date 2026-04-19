@@ -104,15 +104,22 @@ impl<'de> Deserialize<'de> for SummarizeToolInput {
 
         let raw = RawSummarizeToolInput::deserialize(deserializer)?;
 
-        let has_url = raw.url.is_some();
-        let has_text = raw.text.is_some();
+        let normalized_url = raw
+            .url
+            .and_then(|url| if url.is_empty() { None } else { Some(url) });
+        let normalized_text = raw
+            .text
+            .and_then(|text| if text.is_empty() { None } else { Some(text) });
+
+        let has_url = normalized_url.is_some();
+        let has_text = normalized_text.is_some();
         if has_url == has_text {
             return Err(serde::de::Error::custom(
                 "exactly one of `url` or `text` must be provided",
             ));
         }
 
-        if let Some(raw_url) = raw.url {
+        if let Some(raw_url) = normalized_url {
             if raw_url != raw_url.trim() {
                 return Err(serde::de::Error::custom(
                     "`url` cannot have leading or trailing whitespace",
@@ -135,7 +142,7 @@ impl<'de> Deserialize<'de> for SummarizeToolInput {
             });
         }
 
-        let text = raw.text.expect("xor check ensures text exists");
+        let text = normalized_text.expect("xor check ensures text exists");
         if text.trim().is_empty() {
             return Err(serde::de::Error::custom("`text` cannot be blank"));
         }

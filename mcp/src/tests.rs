@@ -729,6 +729,34 @@ async fn summarize_validation_rules_and_byte_limits_are_enforced() {
         .expect_err("missing both url/text must fail");
     assert_invalid_params(missing_both);
 
+    let url_with_empty_text = client
+        .call_tool(
+            CallToolRequestParams::new("kagi_summarize").with_arguments(json_object(json!({
+                "url": "https://example.com/post",
+                "text": ""
+            }))),
+        )
+        .await
+        .expect("url should succeed when text is exact empty string");
+    let url_with_empty_text_output: crate::SummarizeToolOutput = url_with_empty_text
+        .into_typed()
+        .expect("url+empty text output should deserialize");
+    assert_eq!(url_with_empty_text_output.markdown, "# URL");
+
+    let text_with_empty_url = client
+        .call_tool(
+            CallToolRequestParams::new("kagi_summarize").with_arguments(json_object(json!({
+                "text": "real text",
+                "url": ""
+            }))),
+        )
+        .await
+        .expect("text should succeed when url is exact empty string");
+    let text_with_empty_url_output: crate::SummarizeToolOutput = text_with_empty_url
+        .into_typed()
+        .expect("text+empty url output should deserialize");
+    assert_eq!(text_with_empty_url_output.markdown, "# TEXT");
+
     let both_fields = client
         .call_tool(
             CallToolRequestParams::new("kagi_summarize").with_arguments(json_object(json!({
@@ -739,6 +767,50 @@ async fn summarize_validation_rules_and_byte_limits_are_enforced() {
         .await
         .expect_err("url+text together must fail");
     assert_invalid_params(both_fields);
+
+    let both_empty_fields = client
+        .call_tool(
+            CallToolRequestParams::new("kagi_summarize").with_arguments(json_object(json!({
+                "url": "",
+                "text": ""
+            }))),
+        )
+        .await
+        .expect_err("url+text exact empty strings must fail");
+    assert_invalid_params(both_empty_fields);
+
+    let url_with_whitespace_only_text = client
+        .call_tool(
+            CallToolRequestParams::new("kagi_summarize").with_arguments(json_object(json!({
+                "url": "https://example.com/post",
+                "text": "   "
+            }))),
+        )
+        .await
+        .expect_err("url + whitespace-only text must fail");
+    assert_invalid_params(url_with_whitespace_only_text);
+
+    let text_with_whitespace_padded_url = client
+        .call_tool(
+            CallToolRequestParams::new("kagi_summarize").with_arguments(json_object(json!({
+                "text": "real text",
+                "url": " https://example.com/post"
+            }))),
+        )
+        .await
+        .expect_err("text + whitespace-padded url must fail");
+    assert_invalid_params(text_with_whitespace_padded_url);
+
+    let text_with_whitespace_only_url = client
+        .call_tool(
+            CallToolRequestParams::new("kagi_summarize").with_arguments(json_object(json!({
+                "text": "real text",
+                "url": "   "
+            }))),
+        )
+        .await
+        .expect_err("text + whitespace-only url must fail");
+    assert_invalid_params(text_with_whitespace_only_url);
 
     let invalid_url = client
         .call_tool(
