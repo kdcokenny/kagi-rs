@@ -293,46 +293,54 @@ async fn tool_schemas_publish_strict_v1_contract() {
         .find(|tool| tool.name == "kagi_summarize")
         .expect("kagi_summarize tool should exist");
     let summarize_input_schema = Value::Object(summarize_tool.input_schema.as_ref().clone());
-    let summarize_one_of = summarize_input_schema
-        .get("oneOf")
-        .and_then(Value::as_array)
-        .expect("summarize input schema should expose oneOf variants");
-    assert_eq!(summarize_one_of.len(), 2);
-
-    let url_variant = summarize_one_of
-        .iter()
-        .find(|schema| {
-            schema_required_fields(schema, "summarize url variant") == vec!["url".to_string()]
-        })
-        .expect("summarize input should include url-only branch");
-    assert_eq!(url_variant.get("type"), Some(&json!("object")));
-    assert_additional_properties_false(url_variant, "summarize url variant");
+    assert_eq!(summarize_input_schema.get("type"), Some(&json!("object")));
+    assert_additional_properties_false(&summarize_input_schema, "summarize input schema");
     assert_eq!(
-        schema_property_names(url_variant, "summarize url variant"),
-        vec!["url"]
+        schema_property_names(&summarize_input_schema, "summarize input schema"),
+        vec!["text", "url"]
     );
-    let url_property = schema_property(url_variant, "url", "summarize url variant");
-    assert_eq!(url_property.get("type"), Some(&json!("string")));
-    assert_eq!(url_property.get("format"), Some(&json!("uri")));
-    assert_eq!(url_property.get("pattern"), Some(&json!("^https?://\\S+$")));
-
-    let text_variant = summarize_one_of
-        .iter()
-        .find(|schema| {
-            schema_required_fields(schema, "summarize text variant") == vec!["text".to_string()]
-        })
-        .expect("summarize input should include text-only branch");
-    assert_eq!(text_variant.get("type"), Some(&json!("object")));
-    assert_additional_properties_false(text_variant, "summarize text variant");
     assert_eq!(
-        schema_property_names(text_variant, "summarize text variant"),
-        vec!["text"]
+        summarize_input_schema.get("required"),
+        None,
+        "summarize input schema should not require top-level fields"
     );
-    let text_property = schema_property(text_variant, "text", "summarize text variant");
-    assert_eq!(text_property.get("type"), Some(&json!("string")));
-    assert_eq!(text_property.get("minLength"), Some(&json!(1)));
-    assert_eq!(text_property.get("maxLength"), Some(&json!(50_000)));
-    assert_eq!(text_property.get("pattern"), Some(&json!(".*\\S.*")));
+
+    for forbidden_keyword in [
+        "oneOf",
+        "anyOf",
+        "allOf",
+        "not",
+        "minProperties",
+        "maxProperties",
+    ] {
+        assert_eq!(
+            summarize_input_schema.get(forbidden_keyword),
+            None,
+            "summarize input schema must not publish `{forbidden_keyword}`"
+        );
+    }
+
+    let summarize_url_property =
+        schema_property(&summarize_input_schema, "url", "summarize input schema");
+    assert_eq!(summarize_url_property.get("type"), Some(&json!("string")));
+    for forbidden_keyword in ["format", "pattern", "minLength", "maxLength"] {
+        assert_eq!(
+            summarize_url_property.get(forbidden_keyword),
+            None,
+            "summarize url property must not publish `{forbidden_keyword}`"
+        );
+    }
+
+    let summarize_text_property =
+        schema_property(&summarize_input_schema, "text", "summarize input schema");
+    assert_eq!(summarize_text_property.get("type"), Some(&json!("string")));
+    for forbidden_keyword in ["format", "pattern", "minLength", "maxLength"] {
+        assert_eq!(
+            summarize_text_property.get(forbidden_keyword),
+            None,
+            "summarize text property must not publish `{forbidden_keyword}`"
+        );
+    }
 
     let summarize_output_root = Value::Object(
         summarize_tool

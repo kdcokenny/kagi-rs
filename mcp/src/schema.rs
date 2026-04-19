@@ -77,34 +77,15 @@ impl JsonSchema for SummarizeToolInput {
     fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
         json_schema!({
             "type": "object",
-            "oneOf": [
-                {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": ["url"],
-                    "properties": {
-                        "url": {
-                            "type": "string",
-                            "minLength": 1,
-                            "format": "uri",
-                            "pattern": "^https?://\\S+$"
-                        }
-                    }
+            "additionalProperties": false,
+            "properties": {
+                "url": {
+                    "type": "string"
                 },
-                {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": ["text"],
-                    "properties": {
-                        "text": {
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": SUMMARIZE_MAX_TEXT_BYTES,
-                            "pattern": ".*\\S.*"
-                        }
-                    }
+                "text": {
+                    "type": "string"
                 }
-            ]
+            }
         })
     }
 }
