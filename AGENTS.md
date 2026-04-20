@@ -5,18 +5,14 @@
 - `kagi-sdk` and `kagi-mcp` both forbid unsafe Rust (`sdk/src/lib.rs`, `mcp/src/lib.rs`).
 - Toolchain/format pins: Rust `1.94.0` (`rust-toolchain.toml`), `rustfmt` `max_width = 100` and `newline_style = "Unix"` (`rustfmt.toml`).
 
-## Canonical root verification
+## Canonical root verification (CI-equivalent)
 ```bash
-cargo fmt --all
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace
-```
-CI additionally runs doc tests and workspace build with `--locked` (`.github/workflows/ci.yml`):
-```bash
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --locked
 cargo test --doc --workspace --locked
 cargo build --workspace --all-targets --locked
 ```
-Cargo aliases (`.cargo/config.toml`): `cargo lint`, `cargo check-all`, `cargo test-all`.
 
 ## `kagi-sdk` auth/surface boundaries (do not blur)
 - Official API surface: `BotToken`, `Authorization: Bot <token>`.
@@ -28,6 +24,9 @@ Cargo aliases (`.cargo/config.toml`): `cargo lint`, `cargo check-all`, `cargo te
 - Transport is stdio-only (`mcp/src/main.rs` runs `serve_stdio`; `mcp/README.md` documents v1 scope).
 - Capabilities are tools-only, exactly two tools: `kagi_search`, `kagi_summarize`.
 - Prompts/resources are intentionally absent (documented in `mcp/README.md`, asserted in `mcp/src/tests.rs`).
+- Backend selection is resolved once at startup and reused for process lifetime (`mcp/src/lib.rs`, `mcp/src/backend.rs`).
+- `KAGI_MCP_BACKEND=auto` prefers `KAGI_API_KEY`, otherwise `KAGI_SESSION_TOKEN`; `official`/`session` require their matching credential (`mcp/src/backend.rs`, `mcp/src/tests.rs`).
+- No mid-call backend fallback (`mcp/src/backend.rs`, `mcp/src/tests.rs`, `mcp/README.md`).
 
 ## Live tests (manual-only)
 - Tests are ignored by default (`#[ignore = "manual live test; run with -- --ignored"]`):
@@ -43,6 +42,7 @@ KAGI_SESSION_TOKEN=... cargo test -p kagi-sdk --test live_session -- --ignored
 
 ## Release + PR workflow constraints
 - Release tag channels are only `sdk-vX.Y.Z` and `mcp-vX.Y.Z` (no bare `vX.Y.Z`) (`docs/releasing.md`, publish workflows).
-- Release tag commit must already be reachable from `origin/main` (`sdk-publish.yml`, `mcp-release.yml`).
+- Use `scripts/sdk-release-tag.py` and `scripts/mcp-release-tag.py` before tagging; they derive only `sdk-vX.Y.Z` / `mcp-vX.Y.Z`, require `HEAD == origin/main`, and refuse semver tag rewrites (`docs/releasing.md`, `scripts/sdk-release-tag.py`, `scripts/mcp-release-tag.py`).
+- For mutating helper actions (`create-and-push` / `push-existing`), both scripts require a clean worktree/index (`docs/releasing.md`, `scripts/sdk-release-tag.py`, `scripts/mcp-release-tag.py`).
 - `mcp/Cargo.toml` must keep exact SDK pin `kagi-sdk = { version = "=X.Y.Z" }`; a local `path` is allowed only when paired with the same exact version, and MCP release validates both pin shape and crates.io availability of that SDK version (`docs/releasing.md`, `.github/workflows/mcp-release.yml`).
 - PR title gate: `<type>(optional-scope): <summary>` with allowed types `feat|fix|docs|chore|refactor|test|build|ci|perf|style|revert` (`.github/workflows/pr-title.yml`; regex also allows optional `!` before `:`).
