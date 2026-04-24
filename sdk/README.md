@@ -19,7 +19,7 @@ Choose one installation mode:
 
 ```toml
 [dependencies]
-kagi-sdk = "0.1.3"
+kagi-sdk = "1.0.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
