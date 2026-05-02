@@ -264,6 +264,24 @@ async fn tool_schemas_publish_strict_v1_contract() {
         vec!["results", "total_returned"]
     );
 
+    let total_returned_schema = schema_property(
+        search_output_schema,
+        "total_returned",
+        "search output schema",
+    );
+    assert_eq!(
+        total_returned_schema,
+        &json!({
+            "type": "integer",
+            "minimum": 0
+        })
+    );
+    assert_eq!(
+        total_returned_schema.get("format"),
+        None,
+        "total_returned schema must not publish unsupported integer formats"
+    );
+
     let search_results_schema =
         schema_property(search_output_schema, "results", "search output schema");
     assert_eq!(search_results_schema.get("type"), Some(&json!("array")));
