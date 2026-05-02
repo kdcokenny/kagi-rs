@@ -171,11 +171,40 @@ pub struct SearchResultCard {
     pub snippet: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct SearchToolOutput {
     pub results: Vec<SearchResultCard>,
     pub total_returned: usize,
+}
+
+impl JsonSchema for SearchToolOutput {
+    fn schema_name() -> Cow<'static, str> {
+        "SearchToolOutput".into()
+    }
+
+    fn schema_id() -> Cow<'static, str> {
+        concat!(module_path!(), "::SearchToolOutput").into()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        let results_schema = generator
+            .subschema_for::<Vec<SearchResultCard>>()
+            .to_value();
+
+        json_schema!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["results", "total_returned"],
+            "properties": {
+                "results": results_schema,
+                "total_returned": {
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
