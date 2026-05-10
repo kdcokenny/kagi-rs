@@ -1,5 +1,6 @@
 # kagi-rs
 
+[![SafeSkill 50/100](https://img.shields.io/badge/SafeSkill-50%2F100_Use%20with%20Caution-orange)](https://safeskill.dev/scan/kdcokenny-kagi-rs)
 Rust-native workspace for building Kagi integrations with a typed SDK and an MCP server for agents.
 
 ## Workspace status
