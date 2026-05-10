@@ -285,29 +285,51 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: linux/amd64
-            target: x86_64-unknown-linux-gnu
-          - platform: linux/arm64
-            target: aarch64-unknown-linux-gnu
+          - target: x86_64-unknown-linux-gnu
+          - target: aarch64-unknown-linux-gnu
     steps:
       - name: Checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
 
-      - name: Set up QEMU
-        if: matrix.platform == 'linux/arm64'
-        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: ${{ matrix.target }}
 
-      - name: Build binary in target platform
-        env:
-          PLATFORM: ${{ matrix.platform }}
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          key: kagi-mcp-${{ matrix.target }}
+
+      - name: Install cross linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           set -euo pipefail
-          docker run --rm \
-            --platform "${PLATFORM}" \
-            --volume "$PWD:/workspace" \
-            --workdir /workspace \
-            rust:1.94-bookworm \
-            sh -c 'export PATH="/usr/local/cargo/bin:$PATH"; cargo build --release --locked -p kagi-mcp && strip target/release/kagi-mcp || true'
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
+
+      - name: Build binary
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          case "${TARGET}" in
+            x86_64-unknown-linux-gnu)
+              strip_cmd="strip"
+              ;;
+            aarch64-unknown-linux-gnu)
+              export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+              export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
+              strip_cmd="aarch64-linux-gnu-strip"
+              ;;
+            *)
+              echo "::error::Unsupported target: ${TARGET}"
+              exit 1
+              ;;
+          esac
+
+          cargo build --release --locked -p kagi-mcp --target "${TARGET}"
+          "${strip_cmd}" "target/${TARGET}/release/kagi-mcp" || true
 
       - name: Package binary
         env:
@@ -318,7 +340,7 @@ jobs:
           archive_name="kagi-mcp-${VERSION}-${TARGET}.tar.gz"
           rm -rf package dist
           mkdir -p package dist
-          cp target/release/kagi-mcp package/kagi-mcp
+          cp "target/${TARGET}/release/kagi-mcp" package/kagi-mcp
           chmod 0755 package/kagi-mcp
           tar -C package -czf "dist/${archive_name}" kagi-mcp
           (cd dist && sha256sum "${archive_name}" > "${archive_name}.sha256")

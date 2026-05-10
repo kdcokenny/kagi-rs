@@ -776,7 +776,7 @@ dependencies = [
 
 [[package]]
 name = "kagi-mcp"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "kagi-sdk",
  "mockito",
