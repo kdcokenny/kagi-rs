@@ -274,14 +274,77 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish --locked -p kagi-mcp
 
+  build-binaries:
+    name: Build kagi-mcp binary (${{ matrix.target }})
+    needs: publish-crate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            target: x86_64-unknown-linux-gnu
+          - platform: linux/arm64
+            target: aarch64-unknown-linux-gnu
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Set up QEMU
+        if: matrix.platform == 'linux/arm64'
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+
+      - name: Build binary in target platform
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --platform "${PLATFORM}" \
+            --volume "$PWD:/workspace" \
+            --workdir /workspace \
+            rust:1.94-bookworm \
+            sh -lc 'cargo build --release --locked -p kagi-mcp && strip target/release/kagi-mcp || true'
+
+      - name: Package binary
+        env:
+          VERSION: ${{ needs.publish-crate.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          archive_name="kagi-mcp-${VERSION}-${TARGET}.tar.gz"
+          rm -rf package dist
+          mkdir -p package dist
+          cp target/release/kagi-mcp package/kagi-mcp
+          chmod 0755 package/kagi-mcp
+          tar -C package -czf "dist/${archive_name}" kagi-mcp
+          (cd dist && sha256sum "${archive_name}" > "${archive_name}.sha256")
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: kagi-mcp-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
   release:
     name: Upsert MCP GitHub Release
-    needs: publish-crate
+    needs:
+      - publish-crate
+      - build-binaries
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
+      - name: Download binary artifacts
+        uses: actions/download-artifact@v4.3.0
+        with:
+          path: dist
+
       - name: Create or edit MCP release object
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -297,11 +360,14 @@ jobs:
 
           - Crate: https://crates.io/crates/kagi-mcp/${VERSION}
           - Docs: https://docs.rs/kagi-mcp/${VERSION}
+          - Linux binary assets: amd64 and arm64
           EOF
 
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release edit "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes-file "$notes_file"
-            exit 0
+          else
+            gh release create "${GITHUB_REF_NAME}" --verify-tag --title "${GITHUB_REF_NAME}" --notes-file "$notes_file"
           fi
 
-          gh release create "${GITHUB_REF_NAME}" --verify-tag --title "${GITHUB_REF_NAME}" --notes-file "$notes_file"
+          find dist -type f \( -name '*.tar.gz' -o -name '*.sha256' \) -print0 \
+            | xargs -0 gh release upload "${GITHUB_REF_NAME}" --clobber
