@@ -328,6 +328,7 @@ jobs:
               ;;
           esac
 
+          rustup target add "${TARGET}"
           cargo build --release --locked -p kagi-mcp --target "${TARGET}"
           "${strip_cmd}" "target/${TARGET}/release/kagi-mcp" || true
 
