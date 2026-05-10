@@ -307,7 +307,7 @@ jobs:
             --volume "$PWD:/workspace" \
             --workdir /workspace \
             rust:1.94-bookworm \
-            sh -lc 'cargo build --release --locked -p kagi-mcp && strip target/release/kagi-mcp || true'
+            sh -c 'export PATH="/usr/local/cargo/bin:$PATH"; cargo build --release --locked -p kagi-mcp && strip target/release/kagi-mcp || true'
 
       - name: Package binary
         env:
