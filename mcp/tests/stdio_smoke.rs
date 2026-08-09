@@ -37,7 +37,20 @@ async fn stdio_smoke_outputs_only_json_rpc_messages_on_stdout() {
 
     let initialize_json: serde_json::Value =
         serde_json::from_str(&initialize_line).expect("initialize stdout must be valid json-rpc");
+    assert_eq!(initialize_json["jsonrpc"], "2.0");
     assert_eq!(initialize_json["id"], 1);
+    assert_eq!(initialize_json["result"]["protocolVersion"], "2025-11-25");
+    assert_eq!(
+        initialize_json["result"]["serverInfo"],
+        serde_json::json!({
+            "name": "kagi-mcp",
+            "version": env!("CARGO_PKG_VERSION")
+        })
+    );
+    assert_eq!(
+        initialize_json["result"]["capabilities"],
+        serde_json::json!({ "tools": {} })
+    );
 
     stdin
         .write_all(
@@ -63,14 +76,15 @@ async fn stdio_smoke_outputs_only_json_rpc_messages_on_stdout() {
 
     let tools_json: serde_json::Value =
         serde_json::from_str(&tools_line).expect("tools/list stdout must be valid json-rpc");
+    assert_eq!(tools_json["jsonrpc"], "2.0");
     assert_eq!(tools_json["id"], 2);
-    assert_eq!(
-        tools_json["result"]["tools"]
-            .as_array()
-            .expect("tools must be an array")
-            .len(),
-        2
-    );
+    let tool_names = tools_json["result"]["tools"]
+        .as_array()
+        .expect("tools must be an array")
+        .iter()
+        .map(|tool| tool["name"].as_str().expect("tool name must be a string"))
+        .collect::<Vec<_>>();
+    assert_eq!(tool_names, vec!["kagi_search", "kagi_summarize"]);
 
     stdin
         .write_all(
@@ -88,8 +102,10 @@ async fn stdio_smoke_outputs_only_json_rpc_messages_on_stdout() {
 
     let summarize_error_json: serde_json::Value = serde_json::from_str(&summarize_error_line)
         .expect("tools/call invalid-params stdout must be valid json-rpc");
+    assert_eq!(summarize_error_json["jsonrpc"], "2.0");
     assert_eq!(summarize_error_json["id"], 3);
-    assert!(summarize_error_json.get("error").is_some());
+    assert_eq!(summarize_error_json["error"]["code"], -32602);
+    assert!(summarize_error_json.get("result").is_none());
 
     stdin
         .write_all(
@@ -108,10 +124,21 @@ async fn stdio_smoke_outputs_only_json_rpc_messages_on_stdout() {
     let whitespace_url_error_json: serde_json::Value =
         serde_json::from_str(&whitespace_url_error_line)
             .expect("tools/call whitespace-url stdout must be valid json-rpc");
+    assert_eq!(whitespace_url_error_json["jsonrpc"], "2.0");
     assert_eq!(whitespace_url_error_json["id"], 4);
-    assert!(whitespace_url_error_json.get("error").is_some());
+    assert_eq!(whitespace_url_error_json["error"]["code"], -32602);
+    assert!(whitespace_url_error_json.get("result").is_none());
 
     drop(stdin);
+    let trailing_line = timeout(Duration::from_secs(5), lines.next_line())
+        .await
+        .expect("stdout did not close after stdin closed")
+        .expect("trailing stdout read should succeed");
+    assert!(
+        trailing_line.is_none(),
+        "stdout must not contain trailing output"
+    );
+
     let exit_status = timeout(Duration::from_secs(5), child.wait())
         .await
         .expect("child process did not exit after stdin closed")

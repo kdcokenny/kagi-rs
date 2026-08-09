@@ -3,7 +3,10 @@ use std::time::Duration;
 use kagi_sdk::ClientConfig;
 use mockito::{Matcher, Server};
 use rmcp::{
-    model::{CallToolRequestParams, ErrorCode},
+    model::{
+        CallToolRequestParams, ErrorCode, Implementation, ProtocolVersion, ServerCapabilities,
+        ToolAnnotations,
+    },
     ServiceError, ServiceExt,
 };
 use serde_json::{json, Value};
@@ -50,7 +53,7 @@ async fn start_server(
     tokio::task::JoinHandle<()>,
 ) {
     let (server_transport, client_transport) = tokio::io::duplex(64 * 1024);
-    let server = KagiMcpServer::from_backend(backend).expect("server should construct");
+    let server = KagiMcpServer::from_backend(backend);
 
     let handle = tokio::spawn(async move {
         let running = server
@@ -156,10 +159,25 @@ fn search_result_html(count: usize) -> String {
 }
 
 #[tokio::test]
-async fn tool_listing_has_exactly_two_tools_with_read_only_idempotent_metadata() {
+async fn generated_handler_advertises_exact_v1_capabilities_and_tool_metadata() {
     let server = Server::new();
     let backend = build_official_backend(&server);
     let (client, handle) = start_server(backend).await;
+
+    let server_info = client
+        .peer()
+        .peer_info()
+        .expect("initialize should publish server information");
+    assert_eq!(server_info.protocol_version, ProtocolVersion::default());
+    assert_eq!(
+        server_info.capabilities,
+        ServerCapabilities::builder().enable_tools().build()
+    );
+    assert_eq!(
+        server_info.server_info,
+        Implementation::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+    );
+    assert!(server_info.instructions.is_none());
 
     let tools = client
         .peer()
@@ -174,10 +192,41 @@ async fn tool_listing_has_exactly_two_tools_with_read_only_idempotent_metadata()
     names.sort();
     assert_eq!(names, vec!["kagi_search", "kagi_summarize"]);
 
-    for tool in tools {
-        let annotations = tool.annotations.expect("tool annotations are required");
-        assert_eq!(annotations.read_only_hint, Some(true));
-        assert_eq!(annotations.idempotent_hint, Some(true));
+    for tool in &tools {
+        let expected_description = match tool.name.as_ref() {
+            "kagi_search" => "Search Kagi and return normalized result cards.",
+            "kagi_summarize" => "Summarize a URL or raw text with Kagi.",
+            unexpected => panic!("unexpected tool `{unexpected}`"),
+        };
+        assert_eq!(tool.description.as_deref(), Some(expected_description));
+        assert_eq!(
+            tool.annotations,
+            Some(ToolAnnotations::new().read_only(true).idempotent(true))
+        );
+        assert!(tool.title.is_none());
+        assert!(tool.execution.is_none());
+        assert!(tool.icons.is_none());
+        assert!(tool.meta.is_none());
+    }
+
+    let repeated_tools = client
+        .peer()
+        .list_all_tools()
+        .await
+        .expect("repeated tools list should succeed");
+    assert_eq!(repeated_tools, tools);
+
+    let unknown_tool = client
+        .call_tool(CallToolRequestParams::new("not_a_kagi_tool"))
+        .await
+        .expect_err("unknown tools must be rejected");
+    match unknown_tool {
+        ServiceError::McpError(data) => {
+            assert_eq!(data.code, ErrorCode::INVALID_PARAMS);
+            assert_eq!(data.message, "tool not found");
+            assert!(data.data.is_none());
+        }
+        unexpected => panic!("expected unknown-tool MCP error, got {unexpected:?}"),
     }
 
     let prompts = client
@@ -305,6 +354,33 @@ async fn tool_schemas_publish_strict_v1_contract() {
         schema_required_fields(search_result_card_schema, "search result card schema"),
         vec!["title", "url"]
     );
+    assert_eq!(
+        schema_property(
+            search_result_card_schema,
+            "title",
+            "search result card schema"
+        )
+        .get("type"),
+        Some(&json!("string"))
+    );
+    assert_eq!(
+        schema_property(
+            search_result_card_schema,
+            "url",
+            "search result card schema"
+        )
+        .get("type"),
+        Some(&json!("string"))
+    );
+    assert_eq!(
+        schema_property(
+            search_result_card_schema,
+            "snippet",
+            "search result card schema"
+        )
+        .get("type"),
+        Some(&json!(["string", "null"]))
+    );
 
     let summarize_tool = tools
         .iter()
@@ -383,6 +459,26 @@ async fn tool_schemas_publish_strict_v1_contract() {
         schema_required_fields(summarize_output_schema, "summarize output schema"),
         vec!["markdown"]
     );
+    assert_eq!(
+        schema_property(
+            summarize_output_schema,
+            "markdown",
+            "summarize output schema"
+        )
+        .get("type"),
+        Some(&json!("string"))
+    );
+    for optional_field in ["text", "source_url"] {
+        assert_eq!(
+            schema_property(
+                summarize_output_schema,
+                optional_field,
+                "summarize output schema"
+            )
+            .get("type"),
+            Some(&json!(["string", "null"]))
+        );
+    }
 
     client
         .cancel()
@@ -1068,6 +1164,7 @@ async fn tool_errors_are_mapped_for_auth_upstream_parse_and_transport_failures()
         )
         .await
         .expect("upstream failure should still return tool result");
+    assert_eq!(upstream_result.is_error, Some(true));
     let upstream_text = upstream_result
         .content
         .first()
@@ -1100,6 +1197,7 @@ async fn tool_errors_are_mapped_for_auth_upstream_parse_and_transport_failures()
         )
         .await
         .expect("parse drift should still return tool result");
+    assert_eq!(parse_result.is_error, Some(true));
     let parse_text = parse_result
         .content
         .first()
@@ -1134,6 +1232,7 @@ async fn tool_errors_are_mapped_for_auth_upstream_parse_and_transport_failures()
         )
         .await
         .expect("transport failure should still return tool result");
+    assert_eq!(transport_result.is_error, Some(true));
     let transport_text = transport_result
         .content
         .first()
