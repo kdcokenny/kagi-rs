@@ -17,7 +17,7 @@ workspace = true
 
 [dependencies]
 kagi-sdk = { path = "../sdk", version = "=1.0.0" }
-rmcp = { version = "1.5", features = ["client", "transport-io"] }
+rmcp = { version = "1.5", features = ["transport-io"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -29,4 +29,5 @@ url = "2"
 
 [dev-dependencies]
 mockito = "=1.2.0"
+rmcp = { version = "1.5", features = ["client"] }
 tokio = { version = "1", features = ["io-util", "macros", "process", "rt-multi-thread", "time"] }

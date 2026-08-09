@@ -9,8 +9,7 @@ use backend::BackendRuntime;
 pub use backend::{ENV_API_KEY, ENV_BACKEND_MODE, ENV_SESSION_TOKEN};
 pub use error::StartupError;
 use rmcp::{
-    handler::server::{router::tool::ToolRouter, wrapper::Json, wrapper::Parameters},
-    model::{ServerCapabilities, ServerInfo},
+    handler::server::wrapper::{Json, Parameters},
     tool, tool_handler, tool_router, ServerHandler, ServiceExt,
 };
 pub use schema::{SearchResultCard, SearchToolOutput, SummarizeToolOutput};
@@ -18,21 +17,16 @@ pub use schema::{SearchResultCard, SearchToolOutput, SummarizeToolOutput};
 #[derive(Debug, Clone)]
 pub struct KagiMcpServer {
     backend: BackendRuntime,
-    tool_router: ToolRouter<Self>,
 }
 
 impl KagiMcpServer {
     pub fn from_env() -> Result<Self, StartupError> {
-        Self::from_backend(BackendRuntime::from_process_env(
-            kagi_sdk::ClientConfig::default(),
-        )?)
+        let backend = BackendRuntime::from_process_env(kagi_sdk::ClientConfig::default())?;
+        Ok(Self::from_backend(backend))
     }
 
-    fn from_backend(backend: BackendRuntime) -> Result<Self, StartupError> {
-        Ok(Self {
-            backend,
-            tool_router: Self::tool_router(),
-        })
+    fn from_backend(backend: BackendRuntime) -> Self {
+        Self { backend }
     }
 
     pub async fn serve_stdio(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -77,12 +71,8 @@ impl KagiMcpServer {
     }
 }
 
-#[tool_handler(router = self.tool_router)]
-impl ServerHandler for KagiMcpServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-    }
-}
+#[tool_handler(name = "kagi-mcp")]
+impl ServerHandler for KagiMcpServer {}
 
 #[cfg(test)]
 mod tests;
