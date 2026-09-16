@@ -72,7 +72,23 @@ impl KagiMcpServer {
 }
 
 #[tool_handler(name = "kagi-mcp")]
-impl ServerHandler for KagiMcpServer {}
+impl ServerHandler for KagiMcpServer {
+    async fn call_tool(
+        &self,
+        request: rmcp::model::CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
+        let router = Self::tool_router();
+        let route = router
+            .map
+            .get(request.name.as_ref())
+            .ok_or_else(|| rmcp::ErrorData::invalid_params("tool not found", None))?;
+
+        // Preserve v1 JSON-RPC argument errors; rmcp's router converts them to tool results.
+        let context = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        (route.call)(context).await
+    }
+}
 
 #[cfg(test)]
 mod tests;
